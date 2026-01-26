@@ -6,7 +6,7 @@
 /* Font is loaded via <link> in index.html for better performance */
 
 :root {
-  /* Elegant pastel palette */
+  /* Elegant pastel palette - Light mode */
   --sage: #7c9a92;
   --sage-light: #e8efed;
   --sage-dark: #5a7a72;
@@ -42,6 +42,48 @@
   --error-bg: #f9efef;
   --warning: #c4a35a;
   --warning-bg: #f9f5eb;
+  
+  /* Theme transition */
+  --theme-transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Dark mode */
+[data-theme="dark"] {
+  --sage: #8fb0a6;
+  --sage-light: #2a3532;
+  --sage-dark: #a8c5bb;
+  
+  --blush: #c9a0a0;
+  --blush-light: #352a2a;
+  
+  --sky: #9fc0cd;
+  --sky-light: #2a3235;
+  
+  --sand: #c4b598;
+  --sand-light: #32302a;
+  
+  --lavender: #b5b1d4;
+  --lavender-light: #2d2c38;
+  
+  --white: #1a1a1a;
+  --cream: #1e1e1c;
+  --warm-white: #222220;
+  
+  --gray-100: #2a2928;
+  --gray-200: #3a3937;
+  --gray-300: #4a4846;
+  --gray-400: #6a6864;
+  --gray-500: #8a8884;
+  --gray-600: #aaa8a4;
+  --gray-700: #d4d2ce;
+  --gray-800: #eae8e6;
+  
+  --success: #7ba896;
+  --success-bg: #1e2a25;
+  --error: #c78080;
+  --error-bg: #2a1e1e;
+  --warning: #c9a860;
+  --warning-bg: #2a2718;
   
   /* Typography */
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -880,28 +922,79 @@ body {
   }
 }
 
-/* Dark Mode */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --white: #1e1e1c;
-    --cream: #1a1a18;
-    --warm-white: #222220;
-    
-    --gray-100: #2a2a28;
-    --gray-200: #3a3a38;
-    --gray-300: #4a4a48;
-    --gray-400: #6a6a68;
-    --gray-500: #9a9a98;
-    --gray-600: #babab8;
-    --gray-700: #dadadc;
-    --gray-800: #eaeaec;
-    
-    --sage-light: rgba(124,154,146,0.15);
-    --sky-light: rgba(148,180,193,0.15);
-    --sand-light: rgba(201,185,154,0.15);
-    --blush-light: rgba(212,165,165,0.15);
-    --success-bg: rgba(107,144,128,0.15);
-    --error-bg: rgba(193,123,123,0.15);
+/* Theme Toggle Button */
+.theme-toggle {
+  position: fixed;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--gray-200);
+  background: var(--white);
+  color: var(--gray-600);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  transition: var(--theme-transition), transform 0.2s ease;
+  z-index: 1000;
+  opacity: 0.9;
+}
+
+.theme-toggle:hover {
+  transform: scale(1.05);
+  opacity: 1;
+  border-color: var(--sage);
+  color: var(--sage);
+}
+
+.theme-toggle:focus {
+  outline: none;
+  box-shadow: var(--shadow-md), 0 0 0 3px var(--sage-light);
+}
+
+.theme-toggle svg {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.theme-toggle .icon-sun {
+  display: none;
+}
+
+.theme-toggle .icon-moon {
+  display: block;
+}
+
+[data-theme="dark"] .theme-toggle .icon-sun {
+  display: block;
+}
+
+[data-theme="dark"] .theme-toggle .icon-moon {
+  display: none;
+}
+
+/* Smooth transitions for theme change */
+body,
+.header,
+.footer,
+.event-card,
+.modal,
+.form-input,
+.form-select,
+.btn {
+  transition: var(--theme-transition);
+}
+
+@media (max-width: 640px) {
+  .theme-toggle {
+    bottom: var(--space-4);
+    right: var(--space-4);
+    width: 40px;
+    height: 40px;
   }
 }
 
