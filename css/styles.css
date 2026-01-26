@@ -10,23 +10,23 @@
   --sage: #7c9a92;
   --sage-light: #e8efed;
   --sage-dark: #5a7a72;
-  
+
   --blush: #d4a5a5;
   --blush-light: #f9f0f0;
-  
+
   --sky: #94b4c1;
   --sky-light: #e8f1f4;
-  
+
   --sand: #c9b99a;
   --sand-light: #f7f4ee;
-  
+
   --lavender: #a8a4ce;
   --lavender-light: #f0eff7;
-  
+
   --white: #ffffff;
   --cream: #fdfcfa;
   --warm-white: #faf9f7;
-  
+
   --gray-100: #f5f4f2;
   --gray-200: #e8e6e3;
   --gray-300: #d4d2cf;
@@ -35,59 +35,17 @@
   --gray-600: #5c5955;
   --gray-700: #3d3b38;
   --gray-800: #2a2927;
-  
+
   --success: #6b9080;
   --success-bg: #e8f0ec;
   --error: #c17b7b;
   --error-bg: #f9efef;
   --warning: #c4a35a;
   --warning-bg: #f9f5eb;
-  
-  /* Theme transition */
-  --theme-transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
-}
 
-/* Dark mode */
-[data-theme="dark"] {
-  --sage: #8fb0a6;
-  --sage-light: #2a3532;
-  --sage-dark: #a8c5bb;
-  
-  --blush: #c9a0a0;
-  --blush-light: #352a2a;
-  
-  --sky: #9fc0cd;
-  --sky-light: #2a3235;
-  
-  --sand: #c4b598;
-  --sand-light: #32302a;
-  
-  --lavender: #b5b1d4;
-  --lavender-light: #2d2c38;
-  
-  --white: #1a1a1a;
-  --cream: #1e1e1c;
-  --warm-white: #222220;
-  
-  --gray-100: #2a2928;
-  --gray-200: #3a3937;
-  --gray-300: #4a4846;
-  --gray-400: #6a6864;
-  --gray-500: #8a8884;
-  --gray-600: #aaa8a4;
-  --gray-700: #d4d2ce;
-  --gray-800: #eae8e6;
-  
-  --success: #7ba896;
-  --success-bg: #1e2a25;
-  --error: #c78080;
-  --error-bg: #2a1e1e;
-  --warning: #c9a860;
-  --warning-bg: #2a2718;
-  
   /* Typography */
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  
+
   /* Spacing */
   --space-1: 4px;
   --space-2: 8px;
@@ -100,24 +58,77 @@
   --space-12: 48px;
   --space-16: 64px;
   --space-20: 80px;
-  
+
   /* Radius */
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
   --radius-xl: 18px;
   --radius-full: 9999px;
-  
+
   /* Shadows - very soft */
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.03);
   --shadow-sm: 0 2px 4px rgba(0,0,0,0.04);
   --shadow: 0 2px 8px rgba(0,0,0,0.05);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
   --shadow-lg: 0 8px 30px rgba(0,0,0,0.08);
-  
+
   /* Transitions */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --duration: 200ms;
+
+  /* Theme transition */
+  --theme-transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease, fill 0.4s ease, stroke 0.4s ease;
+}
+
+/* Dark mode */
+[data-theme="dark"] {
+  /* Refined dark pastel palette - softer, more elegant */
+  --sage: #9ac0b4;
+  --sage-light: #252d2a;
+  --sage-dark: #b5d4c8;
+
+  --blush: #d4b5b5;
+  --blush-light: #2d2626;
+
+  --sky: #a8c8d4;
+  --sky-light: #252a2d;
+
+  --sand: #d4c8ae;
+  --sand-light: #2a2924;
+
+  --lavender: #c0bce0;
+  --lavender-light: #28272f;
+
+  /* Refined dark backgrounds - warmer, less harsh */
+  --white: #1c1c1a;
+  --cream: #201f1d;
+  --warm-white: #242321;
+
+  /* Refined gray scale for dark mode */
+  --gray-100: #282726;
+  --gray-200: #363432;
+  --gray-300: #484644;
+  --gray-400: #6e6c68;
+  --gray-500: #928f8a;
+  --gray-600: #b5b2ac;
+  --gray-700: #d8d6d2;
+  --gray-800: #eeece8;
+
+  /* Status colors - slightly brighter for dark mode */
+  --success: #8fc0ac;
+  --success-bg: #1e2622;
+  --error: #d49090;
+  --error-bg: #261e1e;
+  --warning: #d4b870;
+  --warning-bg: #262318;
+
+  /* Adjusted shadows for dark mode */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.15);
+  --shadow-sm: 0 2px 4px rgba(0,0,0,0.2);
+  --shadow: 0 2px 8px rgba(0,0,0,0.25);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.35);
 }
 
 /* Reset */
@@ -922,59 +933,83 @@ body {
   }
 }
 
-/* Theme Toggle Button */
+/* Theme Toggle Button - Subtle & Refined */
 .theme-toggle {
   position: fixed;
-  bottom: var(--space-6);
-  right: var(--space-6);
-  width: 44px;
-  height: 44px;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--gray-200);
-  background: var(--white);
-  color: var(--gray-600);
+  border: 1px solid transparent;
+  background: var(--warm-white);
+  color: var(--gray-400);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-md);
-  transition: var(--theme-transition), transform 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  transition: var(--theme-transition), transform 0.3s var(--ease), opacity 0.3s ease;
   z-index: 1000;
-  opacity: 0.9;
+  opacity: 0.6;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .theme-toggle:hover {
-  transform: scale(1.05);
+  transform: scale(1.08);
   opacity: 1;
-  border-color: var(--sage);
-  color: var(--sage);
+  color: var(--gray-600);
+  box-shadow: var(--shadow);
+}
+
+.theme-toggle:active {
+  transform: scale(0.95);
 }
 
 .theme-toggle:focus {
   outline: none;
-  box-shadow: var(--shadow-md), 0 0 0 3px var(--sage-light);
+  opacity: 1;
+  box-shadow: var(--shadow), 0 0 0 2px var(--sage-light);
 }
 
+.theme-toggle:focus:not(:focus-visible) {
+  box-shadow: var(--shadow);
+}
+
+.theme-toggle:focus-visible {
+  box-shadow: var(--shadow), 0 0 0 2px var(--sage-light);
+}
+
+/* Icon container for smooth crossfade */
 .theme-toggle svg {
-  width: 20px;
-  height: 20px;
-  transition: transform 0.3s ease, opacity 0.3s ease;
+  width: 18px;
+  height: 18px;
+  position: absolute;
+  transition: transform 0.4s var(--ease), opacity 0.4s ease;
 }
 
-.theme-toggle .icon-sun {
-  display: none;
-}
-
+/* Moon icon - visible in light mode */
 .theme-toggle .icon-moon {
-  display: block;
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+/* Sun icon - hidden in light mode */
+.theme-toggle .icon-sun {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.5);
+}
+
+/* Dark mode: crossfade icons */
+[data-theme="dark"] .theme-toggle .icon-moon {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.5);
 }
 
 [data-theme="dark"] .theme-toggle .icon-sun {
-  display: block;
-}
-
-[data-theme="dark"] .theme-toggle .icon-moon {
-  display: none;
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
 }
 
 /* Smooth transitions for theme change */
@@ -985,23 +1020,38 @@ body,
 .modal,
 .form-input,
 .form-select,
-.btn {
+.btn,
+.card,
+.nav,
+.section,
+input,
+select,
+textarea,
+table,
+th,
+td {
   transition: var(--theme-transition);
 }
 
+/* Responsive adjustments */
 @media (max-width: 640px) {
   .theme-toggle {
     bottom: var(--space-4);
     right: var(--space-4);
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .theme-toggle svg {
+    width: 16px;
+    height: 16px;
   }
 }
 
 /* Print */
 @media print {
   .header { padding: 1rem 0; border-bottom: 1px solid #ddd; }
-  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .calendar-download-btn { display: none; }
+  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .calendar-download-btn, .theme-toggle { display: none; }
   .event-card { border: 1px solid #ddd; break-inside: avoid; }
   .btn { display: none; }
 }
