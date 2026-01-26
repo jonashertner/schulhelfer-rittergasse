@@ -312,7 +312,7 @@ function registriereHelfer(data) {
     var anlassRow = -1, anlassName = '', maxHelfer = 0, aktuelleHelfer = 0;
     
     for (var i = 1; i < anlassData.length; i++) {
-      if (String(anlassData[i][0]) == String(anlassId)) {
+      if (String(anlassData[i][0]) === String(anlassId)) {
         anlassRow = i + 1;
         anlassName = sanitizeInput(anlassData[i][1] || '');
         maxHelfer = parseInt(anlassData[i][4]) || 0;
@@ -339,9 +339,9 @@ function registriereHelfer(data) {
       var existingName = String(helferData[j][2] || '').toLowerCase();
       var existingAnlassId = String(helferData[j][1] || '');
       
-      if (existingAnlassId == anlassId && 
-          existingEmail == email && 
-          existingName == name.toLowerCase()) {
+      if (existingAnlassId === anlassId &&
+          existingEmail === email &&
+          existingName === name.toLowerCase()) {
         lock.releaseLock();
         return { success: false, message: 'Sie sind bereits für diesen Anlass angemeldet.' };
       }

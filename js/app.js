@@ -9,6 +9,86 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
+  // === Performance Metrics ===
+  const Metrics = {
+    loadEventsTiming: [],
+    registrationTiming: [],
+    maxSamples: 10,
+
+    recordLoadEvents(durationMs) {
+      this.loadEventsTiming.push(durationMs);
+      if (this.loadEventsTiming.length > this.maxSamples) {
+        this.loadEventsTiming.shift();
+      }
+      this.log('loadEvents', durationMs);
+    },
+
+    recordRegistration(durationMs) {
+      this.registrationTiming.push(durationMs);
+      if (this.registrationTiming.length > this.maxSamples) {
+        this.registrationTiming.shift();
+      }
+      this.log('registration', durationMs);
+    },
+
+    getAverageLoadTime() {
+      if (this.loadEventsTiming.length === 0) return 0;
+      const sum = this.loadEventsTiming.reduce((a, b) => a + b, 0);
+      return Math.round(sum / this.loadEventsTiming.length);
+    },
+
+    getAverageRegistrationTime() {
+      if (this.registrationTiming.length === 0) return 0;
+      const sum = this.registrationTiming.reduce((a, b) => a + b, 0);
+      return Math.round(sum / this.registrationTiming.length);
+    },
+
+    log(operation, durationMs) {
+      if (typeof console !== 'undefined' && console.debug) {
+        console.debug(`[Metrics] ${operation}: ${durationMs}ms`);
+      }
+    },
+
+    getSummary() {
+      return {
+        loadEvents: {
+          average: this.getAverageLoadTime(),
+          samples: this.loadEventsTiming.length,
+          last: this.loadEventsTiming[this.loadEventsTiming.length - 1] || 0
+        },
+        registration: {
+          average: this.getAverageRegistrationTime(),
+          samples: this.registrationTiming.length,
+          last: this.registrationTiming[this.registrationTiming.length - 1] || 0
+        }
+      };
+    }
+  };
+
+  // Expose metrics for debugging (accessible via window.SchulhelferMetrics)
+  window.SchulhelferMetrics = Metrics;
+
+  // === Centralized Configuration ===
+  const AppConfig = {
+    // Retry settings
+    MAX_RETRIES: 3,
+    RETRY_DELAY: 1000, // ms
+
+    // Timeout settings (in ms)
+    TIMEOUT_GET: 10000,   // 10 seconds for GET requests
+    TIMEOUT_POST: 15000,  // 15 seconds for POST requests
+
+    // Form persistence
+    FORM_EXPIRY: 3600000, // 1 hour in ms
+
+    // Refresh delay after successful registration
+    REFRESH_DELAY: 2000,  // 2 seconds
+
+    // Default event time if not specified
+    DEFAULT_EVENT_HOUR: 10,
+    DEFAULT_EVENT_DURATION: 2  // hours
+  };
+
   const el = {
     loading: $('#loading'),
     errorMessage: $('#error-message'),
@@ -29,18 +109,64 @@
     submitBtn: $('#submit-btn')
   };
 
-  let events = [];
-  let selectedEvent = null;
-  let lastRegistration = null; // Store last successful registration
-  let retryCount = 0;
-  const MAX_RETRIES = 3;
-  const RETRY_DELAY = 1000; // ms
+  // Centralized application state
+  const AppState = {
+    events: [],
+    selectedEvent: null,
+    lastRegistration: null,
+    retryCount: 0,
 
-  // Generate unique identifier for rate limiting
+    reset() {
+      this.events = [];
+      this.selectedEvent = null;
+      this.lastRegistration = null;
+      this.retryCount = 0;
+    },
+
+    setEvents(events) {
+      this.events = events || [];
+    },
+
+    setSelectedEvent(event) {
+      this.selectedEvent = event;
+    },
+
+    setLastRegistration(registration) {
+      this.lastRegistration = registration;
+    },
+
+    findEventById(id) {
+      // Use String comparison for consistent matching
+      return this.events.find(e => String(e.id) === String(id));
+    },
+
+    clearSelectedEvent() {
+      this.selectedEvent = null;
+    }
+  };
+
+  // Generate unique identifier for rate limiting (more robust than simple localStorage)
   function getIdentifier() {
     let id = localStorage.getItem('userIdentifier');
     if (!id) {
-      id = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      // Use crypto API for secure random if available, fallback to Math.random
+      let randomPart;
+      if (window.crypto && window.crypto.getRandomValues) {
+        const array = new Uint32Array(2);
+        window.crypto.getRandomValues(array);
+        randomPart = array[0].toString(36) + array[1].toString(36);
+      } else {
+        randomPart = Math.random().toString(36).substr(2, 9) + Math.random().toString(36).substr(2, 9);
+      }
+
+      // Add browser fingerprint components for additional uniqueness
+      const fingerprint = [
+        navigator.language || '',
+        screen.width + 'x' + screen.height,
+        new Date().getTimezoneOffset()
+      ].join('|');
+
+      id = 'user_' + Date.now() + '_' + randomPart + '_' + btoa(fingerprint).substr(0, 8);
       localStorage.setItem('userIdentifier', id);
     }
     return id;
@@ -74,7 +200,8 @@
   async function loadEvents(retryAttempt = 0) {
     showLoading(true);
     hideError();
-    
+    const startTime = performance.now();
+
     try {
       // Build URL with cache-busting and identifier
       const identifier = getIdentifier();
@@ -82,7 +209,7 @@
       
       // Create timeout controller for older browsers
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), AppConfig.TIMEOUT_GET);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -102,25 +229,28 @@
         throw new Error(data.error);
       }
 
-      events = data.events || [];
+      AppState.setEvents(data.events);
       renderEvents();
-      retryCount = 0; // Reset on success
-      announce(`${events.length} ${events.length === 1 ? 'Anlass' : 'Anlässe'} gefunden`);
-      
+      AppState.retryCount = 0; // Reset on success
+      announce(`${AppState.events.length} ${AppState.events.length === 1 ? 'Anlass' : 'Anlässe'} gefunden`);
+
+      // Record successful load timing
+      Metrics.recordLoadEvents(Math.round(performance.now() - startTime));
+
     } catch (error) {
       console.error('Fehler beim Laden:', error);
       
       // Retry logic for network failures
-      if (retryAttempt < MAX_RETRIES && (
-        error.message.includes('Failed to fetch') || 
+      if (retryAttempt < AppConfig.MAX_RETRIES && (
+        error.message.includes('Failed to fetch') ||
         error.message.includes('network') ||
         error.name === 'TimeoutError' ||
         error.name === 'AbortError'
       )) {
         retryAttempt++;
-        retryCount = retryAttempt;
-        announce(`Verbindungsfehler. Versuch ${retryAttempt}/${MAX_RETRIES}...`);
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * retryAttempt));
+        AppState.retryCount = retryAttempt;
+        announce(`Verbindungsfehler. Versuch ${retryAttempt}/${AppConfig.MAX_RETRIES}...`);
+        await new Promise(resolve => setTimeout(resolve, AppConfig.RETRY_DELAY * retryAttempt));
         return loadEvents(retryAttempt);
       }
       
@@ -143,14 +273,14 @@
 
   // === Render Events ===
   function renderEvents() {
-    if (events.length === 0) {
+    if (AppState.events.length === 0) {
       el.eventsList.innerHTML = '';
       el.noEvents.hidden = false;
       return;
     }
 
     el.noEvents.hidden = true;
-    el.eventsList.innerHTML = events.map((event, i) => createEventCard(event, i)).join('');
+    el.eventsList.innerHTML = AppState.events.map((event, i) => createEventCard(event, i)).join('');
 
     $$('.event-card').forEach(card => {
       card.addEventListener('click', handleEventClick);
@@ -234,39 +364,64 @@
       </article>`;
   }
   
+  // German month names mapping
+  const GERMAN_MONTHS = {
+    'januar': 0, 'februar': 1, 'märz': 2, 'april': 3, 'mai': 4, 'juni': 5,
+    'juli': 6, 'august': 7, 'september': 8, 'oktober': 9, 'november': 10, 'dezember': 11
+  };
+
+  // Validate that a Date object represents the expected day/month/year
+  function isValidDate(date, year, month, day) {
+    return date instanceof Date &&
+           !isNaN(date.getTime()) &&
+           date.getFullYear() === year &&
+           date.getMonth() === month &&
+           date.getDate() === day;
+  }
+
   // Parse German date string to Date object
+  // Supports formats: "Montag, 15. Juli 2025", "15. Juli 2025", "15.7.2025"
   function parseEventDate(dateStr) {
-    if (!dateStr) return null;
+    if (!dateStr || typeof dateStr !== 'string') return null;
+
     try {
-      // Format: "Montag, 15. Juli 2025" or "15. Juli 2025"
-      const months = {
-        'januar': 0, 'februar': 1, 'märz': 2, 'april': 3, 'mai': 4, 'juni': 5,
-        'juli': 6, 'august': 7, 'september': 8, 'oktober': 9, 'november': 10, 'dezember': 11
-      };
-      
-      // Try to match the date pattern (day. month year) - handles "Montag, 15. Juli 2025"
-      const match = dateStr.match(/(\d{1,2})\.\s+(\w+)\s+(\d{4})/i);
-      if (match) {
-        const day = parseInt(match[1], 10);
-        const monthName = match[2].toLowerCase().trim();
-        const year = parseInt(match[3], 10);
-        const month = months[monthName];
-        
-        if (month !== undefined && !isNaN(day) && !isNaN(year) && day > 0 && day <= 31) {
+      // Pattern 1: German format with month name "15. Juli 2025" or "Montag, 15. Juli 2025"
+      const germanMatch = dateStr.match(/(\d{1,2})\.\s*(\w+)\s+(\d{4})/i);
+      if (germanMatch) {
+        const day = parseInt(germanMatch[1], 10);
+        const monthName = germanMatch[2].toLowerCase().trim();
+        const year = parseInt(germanMatch[3], 10);
+        const month = GERMAN_MONTHS[monthName];
+
+        if (month !== undefined && day >= 1 && day <= 31 && year >= 2000 && year <= 2100) {
           const date = new Date(year, month, day);
-          // Verify the date is valid
-          if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
+          if (isValidDate(date, year, month, day)) {
             return date;
           }
         }
       }
-      
-      // Fallback: try to parse as standard date string
-      const fallbackDate = new Date(dateStr);
-      if (!isNaN(fallbackDate.getTime())) {
-        return fallbackDate;
+
+      // Pattern 2: Numeric format "15.7.2025" or "15.07.2025"
+      const numericMatch = dateStr.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+      if (numericMatch) {
+        const day = parseInt(numericMatch[1], 10);
+        const month = parseInt(numericMatch[2], 10) - 1; // JS months are 0-indexed
+        const year = parseInt(numericMatch[3], 10);
+
+        if (month >= 0 && month <= 11 && day >= 1 && day <= 31 && year >= 2000 && year <= 2100) {
+          const date = new Date(year, month, day);
+          if (isValidDate(date, year, month, day)) {
+            return date;
+          }
+        }
       }
-      
+
+      // Pattern 3: ISO format fallback (for data attributes)
+      const isoDate = new Date(dateStr);
+      if (!isNaN(isoDate.getTime())) {
+        return isoDate;
+      }
+
       console.warn('Could not parse date:', dateStr);
       return null;
     } catch (e) {
@@ -317,7 +472,7 @@
         const minute = parseInt(singleMatch[2]);
         return {
           start: { hour, minute },
-          end: { hour: hour + 2, minute } // Default 2 hour duration
+          end: { hour: hour + AppConfig.DEFAULT_EVENT_DURATION, minute }
         };
       }
       return null;
@@ -325,20 +480,111 @@
       return null;
     }
   }
-  
-  // Generate iCal file
+
+  // === Shared Calendar Utility ===
+  // Format date for iCal (YYYYMMDDTHHMMSSZ) - UTC format
+  function formatICalDate(date) {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+    return `${year}${month}${day}T${hours}${minutes}${seconds}Z`;
+  }
+
+  // Escape text for iCal format
+  function escapeICal(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/\\/g, '\\\\')
+      .replace(/;/g, '\\;')
+      .replace(/,/g, '\\,')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '');
+  }
+
+  // Create iCal content from event data
+  function createICalContent(options) {
+    const { eventName, eventDate, eventTime, description, attendeeName } = options;
+
+    if (!eventDate || isNaN(eventDate.getTime())) {
+      return null;
+    }
+
+    // Set start time
+    const start = new Date(eventDate);
+    if (eventTime && eventTime.start) {
+      start.setHours(eventTime.start.hour, eventTime.start.minute, 0, 0);
+    } else {
+      start.setHours(AppConfig.DEFAULT_EVENT_HOUR, 0, 0, 0);
+    }
+
+    // Set end time
+    const end = new Date(start);
+    if (eventTime && eventTime.end) {
+      end.setHours(eventTime.end.hour, eventTime.end.minute, 0, 0);
+    } else {
+      end.setHours(start.getHours() + AppConfig.DEFAULT_EVENT_DURATION, 0, 0, 0);
+    }
+
+    const startStr = formatICalDate(start);
+    const endStr = formatICalDate(end);
+    const nowStr = formatICalDate(new Date());
+
+    // Build summary (include attendee name if provided)
+    const summary = attendeeName
+      ? `${eventName} - ${attendeeName}`
+      : eventName;
+
+    return [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Schulhelfer Rittergasse//DE',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@schulhelfer-rittergasse`,
+      `DTSTAMP:${nowStr}`,
+      `DTSTART:${startStr}`,
+      `DTEND:${endStr}`,
+      `SUMMARY:${escapeICal(summary)}`,
+      `DESCRIPTION:${escapeICal(description || 'Schulhelfer Anlass - Primarstufe Rittergasse Basel')}`,
+      `LOCATION:Primarstufe Rittergasse Basel`,
+      'STATUS:CONFIRMED',
+      'SEQUENCE:0',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+  }
+
+  // Download an iCal file
+  function downloadICalFile(icalContent, filename) {
+    const blob = new Blob([icalContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  // Generate iCal file from event card
   function generateICal(eventCard) {
     try {
       const name = eventCard.dataset.name;
       const dateStr = eventCard.dataset.date;
       const timeStr = eventCard.dataset.time;
       const description = eventCard.dataset.description || '';
-      
+
       if (!name) {
         console.error('No event name found');
         return null;
       }
-      
+
       // Try to get date from data attribute first
       let eventDate = null;
       if (dateStr) {
@@ -347,7 +593,7 @@
           eventDate = null;
         }
       }
-      
+
       // If no valid date from data attribute, try to parse from the displayed date
       if (!eventDate) {
         const dateElement = eventCard.querySelector('.event-meta-item span');
@@ -356,12 +602,7 @@
           eventDate = parseEventDate(displayedDate);
         }
       }
-      
-      if (!eventDate || isNaN(eventDate.getTime())) {
-        console.error('Could not parse event date', dateStr);
-        return null;
-      }
-      
+
       // Parse time
       let eventTime = null;
       if (timeStr && timeStr !== 'null' && timeStr !== '') {
@@ -383,70 +624,13 @@
           eventTime = parseEventTime(timeText);
         }
       }
-      
-      // Set start time
-      const start = new Date(eventDate);
-      if (eventTime && eventTime.start) {
-        start.setHours(eventTime.start.hour, eventTime.start.minute, 0, 0);
-      } else {
-        start.setHours(10, 0, 0, 0); // Default 10:00
-      }
-      
-      // Set end time
-      const end = new Date(start);
-      if (eventTime && eventTime.end) {
-        end.setHours(eventTime.end.hour, eventTime.end.minute, 0, 0);
-      } else {
-        end.setHours(start.getHours() + 2, 0, 0, 0); // Default 2 hours
-      }
-      
-      // Format dates for iCal (YYYYMMDDTHHMMSSZ) - UTC format
-      function formatICalDate(date) {
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
-        const hours = String(date.getUTCHours()).padStart(2, '0');
-        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-        const seconds = String(date.getUTCSeconds()).padStart(2, '0');
-        return `${year}${month}${day}T${hours}${minutes}${seconds}Z`;
-      }
-      
-      const startStr = formatICalDate(start);
-      const endStr = formatICalDate(end);
-      const nowStr = formatICalDate(new Date());
-      
-      // Escape text for iCal
-      function escapeICal(text) {
-        if (!text) return '';
-        return String(text)
-          .replace(/\\/g, '\\\\')
-          .replace(/;/g, '\\;')
-          .replace(/,/g, '\\,')
-          .replace(/\n/g, '\\n')
-          .replace(/\r/g, '');
-      }
-      
-      const ical = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//Schulhelfer Rittergasse//DE',
-        'CALSCALE:GREGORIAN',
-        'METHOD:PUBLISH',
-        'BEGIN:VEVENT',
-        `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@schulhelfer-rittergasse`,
-        `DTSTAMP:${nowStr}`,
-        `DTSTART:${startStr}`,
-        `DTEND:${endStr}`,
-        `SUMMARY:${escapeICal(name)}`,
-        `DESCRIPTION:${escapeICal(description || 'Schulhelfer Anlass - Primarstufe Rittergasse Basel')}`,
-        `LOCATION:Primarstufe Rittergasse Basel`,
-        'STATUS:CONFIRMED',
-        'SEQUENCE:0',
-        'END:VEVENT',
-        'END:VCALENDAR'
-      ].join('\r\n');
-      
-      return ical;
+
+      return createICalContent({
+        eventName: name,
+        eventDate: eventDate,
+        eventTime: eventTime,
+        description: description
+      });
     } catch (error) {
       console.error('Error generating iCal:', error);
       return null;
@@ -461,19 +645,10 @@
         showError('Kalender-Download nicht möglich. Das Datum konnte nicht erkannt werden.');
         return;
       }
-      
+
       const name = eventCard.dataset.name || 'Schulhelfer-Anlass';
-      const blob = new Blob([ical], { type: 'text/calendar;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${name.replace(/[^a-z0-9äöüÄÖÜß]/gi, '_')}.ics`;
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
+      const filename = `${name.replace(/[^a-z0-9äöüÄÖÜß]/gi, '_')}.ics`;
+      downloadICalFile(ical, filename);
       announce(`Kalender-Eintrag für "${name}" wurde heruntergeladen`);
     } catch (error) {
       console.error('Error downloading calendar:', error);
@@ -494,8 +669,8 @@
   }
 
   function selectEvent(eventId, eventName) {
-    selectedEvent = events.find(e => e.id == eventId);
-    if (!selectedEvent) return;
+    AppState.setSelectedEvent(AppState.findEventById(eventId));
+    if (!AppState.selectedEvent) return;
 
     $$('.event-card').forEach(card => {
       card.setAttribute('aria-selected', (card.dataset.id == eventId).toString());
@@ -564,14 +739,14 @@
       const saved = localStorage.getItem('schulhelfer_form');
       if (saved) {
         const formData = JSON.parse(saved);
-        // Only restore if less than 1 hour old
-        if (Date.now() - formData.timestamp < 3600000) {
+        // Only restore if not expired
+        if (Date.now() - formData.timestamp < AppConfig.FORM_EXPIRY) {
           if (formData.name) el.nameInput.value = formData.name;
           if (formData.email) el.emailInput.value = formData.email;
           if (formData.phone) el.phoneInput.value = formData.phone;
           if (formData.eventId) {
             // Try to restore the selected event
-            const event = events.find(e => e.id == formData.eventId);
+            const event = AppState.findEventById(formData.eventId);
             if (event) {
               selectEvent(event.id, event.name);
             }
@@ -595,12 +770,17 @@
     el.form.addEventListener('submit', handleSubmit);
     el.nameInput.addEventListener('blur', () => validateField(el.nameInput, validateName));
     el.emailInput.addEventListener('blur', () => validateField(el.emailInput, validateEmail));
+    el.phoneInput.addEventListener('blur', () => validateField(el.phoneInput, validatePhone));
     el.nameInput.addEventListener('input', () => {
       clearFieldError(el.nameInput);
       saveFormData();
     });
     el.emailInput.addEventListener('input', () => {
       clearFieldError(el.emailInput);
+      saveFormData();
+    });
+    el.phoneInput.addEventListener('input', () => {
+      clearFieldError(el.phoneInput);
       saveFormData();
     });
   }
@@ -637,6 +817,22 @@
     return null;
   }
 
+  function validatePhone(v) {
+    v = v.trim();
+    if (!v) return null; // Optional field - empty is valid
+
+    // Remove spaces and dashes for validation
+    const cleaned = v.replace(/[\s\-]/g, '');
+
+    // Swiss phone formats: 079XXXXXXX, +41XXXXXXXXX, 0041XXXXXXXXX
+    // Also allow general international format
+    if (!/^(\+?41|0041|0)\d{8,10}$/.test(cleaned) && !/^\+?\d{10,15}$/.test(cleaned)) {
+      return 'Bitte geben Sie eine gültige Telefonnummer ein (z.B. 079 123 45 67).';
+    }
+
+    return null;
+  }
+
   // === Submit with Retry Logic ===
   async function handleSubmit(e) {
     e.preventDefault();
@@ -645,9 +841,13 @@
 
     const nameValid = validateField(el.nameInput, validateName);
     const emailValid = validateField(el.emailInput, validateEmail);
+    const phoneValid = validateField(el.phoneInput, validatePhone);
 
-    if (!nameValid || !emailValid) {
-      (nameValid ? el.emailInput : el.nameInput).focus();
+    if (!nameValid || !emailValid || !phoneValid) {
+      // Focus the first invalid field
+      if (!nameValid) el.nameInput.focus();
+      else if (!emailValid) el.emailInput.focus();
+      else el.phoneInput.focus();
       announce('Bitte korrigieren Sie die markierten Felder.');
       return;
     }
@@ -661,26 +861,30 @@
     };
 
     setSubmitLoading(true);
+    const startTime = performance.now();
 
     try {
       const result = await submitWithRetry(data, 0);
 
+      // Record registration timing
+      Metrics.recordRegistration(Math.round(performance.now() - startTime));
+
       if (result.success) {
         // Store registration data for calendar download
-        lastRegistration = {
+        AppState.setLastRegistration({
           name: data.name,
           eventId: data.anlassId,
-          eventName: selectedEvent ? selectedEvent.name : '',
-          eventDate: selectedEvent ? selectedEvent.datum : '',
-          eventTime: selectedEvent ? selectedEvent.zeit : '',
-          eventDescription: selectedEvent ? selectedEvent.beschreibung : ''
-        };
-        
-        showSuccess(result.message, lastRegistration);
+          eventName: AppState.selectedEvent ? AppState.selectedEvent.name : '',
+          eventDate: AppState.selectedEvent ? AppState.selectedEvent.datum : '',
+          eventTime: AppState.selectedEvent ? AppState.selectedEvent.zeit : '',
+          eventDescription: AppState.selectedEvent ? AppState.selectedEvent.beschreibung : ''
+        });
+
+        showSuccess(result.message, AppState.lastRegistration);
         clearFormData(); // Clear saved form data on success
         resetForm();
         announce('Anmeldung erfolgreich!');
-        setTimeout(loadEvents, 2000);
+        setTimeout(loadEvents, AppConfig.REFRESH_DELAY);
       } else {
         showError(result.message || 'Ein Fehler ist aufgetreten.');
         announce(`Fehler: ${result.message}`);
@@ -697,7 +901,7 @@
   async function submitWithRetry(data, retryAttempt = 0) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), AppConfig.TIMEOUT_POST);
 
       const response = await fetch(CONFIG.API_URL, {
         method: 'POST',
@@ -714,26 +918,26 @@
       }
 
       const result = await response.json();
-      
-      if (!result.success && retryAttempt < MAX_RETRIES && (
+
+      if (!result.success && retryAttempt < AppConfig.MAX_RETRIES && (
         result.message && result.message.includes('Rate limit')
       )) {
         // Retry on rate limit after delay
         retryAttempt++;
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * retryAttempt * 2));
+        await new Promise(resolve => setTimeout(resolve, AppConfig.RETRY_DELAY * retryAttempt * 2));
         return submitWithRetry(data, retryAttempt);
       }
 
       return result;
     } catch (error) {
       // Retry on network errors
-      if (retryAttempt < MAX_RETRIES && (
+      if (retryAttempt < AppConfig.MAX_RETRIES && (
         error.name === 'AbortError' ||
         error.message.includes('Failed to fetch') ||
         error.message.includes('network')
       )) {
         retryAttempt++;
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * retryAttempt));
+        await new Promise(resolve => setTimeout(resolve, AppConfig.RETRY_DELAY * retryAttempt));
         return submitWithRetry(data, retryAttempt);
       }
       throw error;
@@ -751,7 +955,7 @@
   function resetForm() {
     el.form.reset();
     el.registrationSection.hidden = true;
-    selectedEvent = null;
+    AppState.clearSelectedEvent();
     $$('.event-card').forEach(card => card.setAttribute('aria-selected', 'false'));
     clearFormData();
   }
@@ -819,85 +1023,26 @@
         showError('Kalender-Download nicht möglich. Das Datum konnte nicht erkannt werden.');
         return;
       }
-      
+
       const eventTime = parseEventTime(registration.eventTime);
-      
-      // Set start time
-      const start = new Date(eventDate);
-      if (eventTime && eventTime.start) {
-        start.setHours(eventTime.start.hour, eventTime.start.minute, 0, 0);
-      } else {
-        start.setHours(10, 0, 0, 0); // Default 10:00
-      }
-      
-      // Set end time
-      const end = new Date(start);
-      if (eventTime && eventTime.end) {
-        end.setHours(eventTime.end.hour, eventTime.end.minute, 0, 0);
-      } else {
-        end.setHours(start.getHours() + 2, 0, 0, 0); // Default 2 hours
-      }
-      
-      // Format dates for iCal (YYYYMMDDTHHMMSSZ) - UTC format
-      function formatICalDate(date) {
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
-        const hours = String(date.getUTCHours()).padStart(2, '0');
-        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-        const seconds = String(date.getUTCSeconds()).padStart(2, '0');
-        return `${year}${month}${day}T${hours}${minutes}${seconds}Z`;
-      }
-      
-      const startStr = formatICalDate(start);
-      const endStr = formatICalDate(end);
-      const nowStr = formatICalDate(new Date());
-      
-      // Escape text for iCal
-      function escapeICal(text) {
-        if (!text) return '';
-        return String(text)
-          .replace(/\\/g, '\\\\')
-          .replace(/;/g, '\\;')
-          .replace(/,/g, '\\,')
-          .replace(/\n/g, '\\n')
-          .replace(/\r/g, '');
-      }
-      
       const eventName = registration.eventName || 'Schulhelfer Anlass';
       const description = `Schulhelfer Anlass: ${eventName}\n\nAngemeldet als: ${registration.name}\n\n${registration.eventDescription || 'Primarstufe Rittergasse Basel'}`;
-      
-      const ical = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//Schulhelfer Rittergasse//DE',
-        'CALSCALE:GREGORIAN',
-        'METHOD:PUBLISH',
-        'BEGIN:VEVENT',
-        `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@schulhelfer-rittergasse`,
-        `DTSTAMP:${nowStr}`,
-        `DTSTART:${startStr}`,
-        `DTEND:${endStr}`,
-        `SUMMARY:${escapeICal(eventName)} - ${escapeICal(registration.name)}`,
-        `DESCRIPTION:${escapeICal(description)}`,
-        `LOCATION:Primarstufe Rittergasse Basel`,
-        'STATUS:CONFIRMED',
-        'SEQUENCE:0',
-        'END:VEVENT',
-        'END:VCALENDAR'
-      ].join('\r\n');
-      
-      const blob = new Blob([ical], { type: 'text/calendar;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${eventName.replace(/[^a-z0-9äöüÄÖÜß]/gi, '_')}_${registration.name.replace(/[^a-z0-9äöüÄÖÜß]/gi, '_')}.ics`;
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
+
+      const ical = createICalContent({
+        eventName: eventName,
+        eventDate: eventDate,
+        eventTime: eventTime,
+        description: description,
+        attendeeName: registration.name
+      });
+
+      if (!ical) {
+        showError('Kalender-Download nicht möglich. Das Datum konnte nicht erkannt werden.');
+        return;
+      }
+
+      const filename = `${eventName.replace(/[^a-z0-9äöüÄÖÜß]/gi, '_')}_${registration.name.replace(/[^a-z0-9äöüÄÖÜß]/gi, '_')}.ics`;
+      downloadICalFile(ical, filename);
       announce(`Kalender-Eintrag für "${eventName}" wurde heruntergeladen`);
     } catch (error) {
       console.error('Error downloading calendar:', error);

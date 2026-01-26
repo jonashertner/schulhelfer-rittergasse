@@ -3,7 +3,7 @@
    Clean Elegant Pastel Design
    ======================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+/* Font is loaded via <link> in index.html for better performance */
 
 :root {
   /* Elegant pastel palette */
