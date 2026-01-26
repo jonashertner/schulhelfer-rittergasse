@@ -223,39 +223,59 @@ function doPost(e) {
 
 // === Get Active Events ===
 function getAktiveAnlaesse() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Anlässe');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
   if (!sheet) return [];
-  
+
   var data = sheet.getDataRange().getValues();
   var heute = new Date();
   heute.setHours(0, 0, 0, 0);
-  
+
+  // Get all registrations to map helper names to events
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  var helferByAnlass = {};
+  if (helferSheet) {
+    var helferData = helferSheet.getDataRange().getValues();
+    for (var j = 1; j < helferData.length; j++) {
+      var anlassId = String(helferData[j][1] || '');
+      var helferName = String(helferData[j][2] || '').trim();
+      if (anlassId && helferName) {
+        if (!helferByAnlass[anlassId]) {
+          helferByAnlass[anlassId] = [];
+        }
+        helferByAnlass[anlassId].push(sanitizeInput(helferName));
+      }
+    }
+  }
+
   var anlaesse = [];
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
     if (!row[0]) continue;
-    
+
     // Improved date parsing
     var datum = parseDate(row[2]);
     if (!datum) continue; // Skip invalid dates
-    
+
     var maxHelfer = parseInt(row[4]) || 0;
     var aktuelleHelfer = parseInt(row[5]) || 0;
-    
+    var anlassId = String(row[0]);
+
     // Normalize dates for comparison
     var datumNormalized = new Date(datum);
     datumNormalized.setHours(0, 0, 0, 0);
-    
+
     if (datumNormalized >= heute && aktuelleHelfer < maxHelfer) {
       anlaesse.push({
-        id: String(row[0]),
+        id: anlassId,
         name: sanitizeInput(row[1]),
         datum: formatDatum(datum),
         zeit: sanitizeInput(row[3] || ''),
         beschreibung: sanitizeInput(row[6] || ''),
         maxHelfer: maxHelfer,
         aktuelleHelfer: aktuelleHelfer,
-        freiePlaetze: maxHelfer - aktuelleHelfer
+        freiePlaetze: maxHelfer - aktuelleHelfer,
+        helferNamen: helferByAnlass[anlassId] || []
       });
     }
   }
