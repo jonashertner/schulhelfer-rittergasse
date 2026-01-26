@@ -936,10 +936,10 @@ body {
 /* Theme Toggle Button - Subtle & Refined */
 .theme-toggle {
   position: fixed;
-  bottom: var(--space-5);
-  right: var(--space-5);
-  width: 36px;
-  height: 36px;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-full);
   border: 1px solid transparent;
   background: var(--warm-white);
@@ -954,6 +954,11 @@ body {
   opacity: 0.6;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  /* Touch optimization */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .theme-toggle:hover {
@@ -964,7 +969,8 @@ body {
 }
 
 .theme-toggle:active {
-  transform: scale(0.95);
+  transform: scale(0.92);
+  opacity: 1;
 }
 
 .theme-toggle:focus {
@@ -983,8 +989,8 @@ body {
 
 /* Icon container for smooth crossfade */
 .theme-toggle svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   position: absolute;
   transition: transform 0.4s var(--ease), opacity 0.4s ease;
 }
@@ -1033,18 +1039,114 @@ td {
   transition: var(--theme-transition);
 }
 
-/* Responsive adjustments */
-@media (max-width: 640px) {
+/* ===== Theme Toggle Responsive Adjustments ===== */
+
+/* Large desktop - more subtle, positioned further from edge */
+@media (min-width: 1200px) {
   .theme-toggle {
-    bottom: var(--space-4);
-    right: var(--space-4);
-    width: 32px;
-    height: 32px;
+    bottom: var(--space-8);
+    right: var(--space-8);
+    width: 38px;
+    height: 38px;
+    opacity: 0.5;
   }
 
   .theme-toggle svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Tablet landscape */
+@media (min-width: 769px) and (max-width: 1199px) {
+  .theme-toggle {
+    bottom: var(--space-6);
+    right: var(--space-6);
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* Tablet portrait & large phones */
+@media (min-width: 481px) and (max-width: 768px) {
+  .theme-toggle {
+    bottom: var(--space-5);
+    right: var(--space-5);
+    width: 44px;
+    height: 44px;
+    opacity: 0.7;
+  }
+
+  .theme-toggle svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* Mobile - touch-friendly with safe area support */
+@media (max-width: 480px) {
+  .theme-toggle {
+    /* Safe area insets for notched devices */
+    bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    right: calc(var(--space-4) + env(safe-area-inset-right, 0px));
+    /* Minimum 44px touch target per Apple/Google guidelines */
+    width: 44px;
+    height: 44px;
+    opacity: 0.75;
+    /* Slightly more visible shadow on mobile */
+    box-shadow: var(--shadow);
+  }
+
+  .theme-toggle svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .theme-toggle:hover {
+    transform: none;
+  }
+
+  .theme-toggle:active {
+    transform: scale(0.9);
+    opacity: 1;
+    box-shadow: var(--shadow-md);
+  }
+}
+
+/* Small mobile phones */
+@media (max-width: 360px) {
+  .theme-toggle {
+    bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+    right: calc(var(--space-3) + env(safe-area-inset-right, 0px));
+    width: 42px;
+    height: 42px;
+  }
+
+  .theme-toggle svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Landscape mode on mobile - adjust for thumb reach */
+@media (max-height: 500px) and (orientation: landscape) {
+  .theme-toggle {
+    bottom: var(--space-3);
+    right: var(--space-4);
+    width: 40px;
+    height: 40px;
+  }
+
+  .theme-toggle svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* High DPI / Retina displays - crisp icons */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .theme-toggle svg {
+    shape-rendering: geometricPrecision;
   }
 }
 
