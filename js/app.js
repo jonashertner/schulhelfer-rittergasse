@@ -124,7 +124,12 @@
     },
 
     setEvents(events) {
-      this.events = events || [];
+      this.events = (events || []).slice().sort((a, b) => {
+        // Sort by datumSort if available (from backend), otherwise parse datum string
+        const dateA = a.datumSort || parseEventDateForSort(a.datum);
+        const dateB = b.datumSort || parseEventDateForSort(b.datum);
+        return dateA - dateB;
+      });
     },
 
     setSelectedEvent(event) {
@@ -382,6 +387,12 @@
            date.getFullYear() === year &&
            date.getMonth() === month &&
            date.getDate() === day;
+  }
+
+  // Helper for sorting: returns timestamp or Infinity for invalid dates
+  function parseEventDateForSort(dateStr) {
+    const date = parseEventDate(dateStr);
+    return date ? date.getTime() : Infinity;
   }
 
   // Parse German date string to Date object
