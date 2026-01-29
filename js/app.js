@@ -291,8 +291,8 @@
   function createEventCard(event, index) {
     const badgeClass = event.freiePlaetze <= 1 ? 'event-badge--last' : 
                        event.freiePlaetze <= 3 ? 'event-badge--limited' : 'event-badge--available';
-    const badgeText = event.freiePlaetze <= 1 ? 'Letzter Platz!' : 
-                      event.freiePlaetze <= 3 ? `Nur ${event.freiePlaetze} Plätze` : `${event.freiePlaetze} Plätze frei`;
+    const badgeText = event.freiePlaetze <= 1 ? 'Noch 1 Helfer benötigt' :
+                      `Noch ${event.freiePlaetze} Helfer benötigt`;
     
     // Parse date for calendar
     const eventDate = parseEventDate(event.datum);
@@ -363,7 +363,7 @@
               <line x1="8" y1="2" x2="8" y2="6"></line>
               <line x1="3" y1="10" x2="21" y2="10"></line>
             </svg>
-            <span>Kalender</span>
+            <span>Kalendereintrag speichern</span>
           </button>
         </div>
       </article>`;
