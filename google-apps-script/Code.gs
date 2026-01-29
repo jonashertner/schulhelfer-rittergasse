@@ -270,6 +270,7 @@ function getAktiveAnlaesse() {
         id: anlassId,
         name: sanitizeInput(row[1]),
         datum: formatDatum(datum),
+        datumSort: datumNormalized.getTime(),
         zeit: sanitizeInput(row[3] || ''),
         beschreibung: sanitizeInput(row[6] || ''),
         maxHelfer: maxHelfer,
@@ -279,6 +280,12 @@ function getAktiveAnlaesse() {
       });
     }
   }
+
+  // Sort by date ascending (earliest first)
+  anlaesse.sort(function(a, b) {
+    return a.datumSort - b.datumSort;
+  });
+
   return anlaesse;
 }
 
