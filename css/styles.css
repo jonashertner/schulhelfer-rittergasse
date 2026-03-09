@@ -1290,6 +1290,41 @@ a {
   }
 }
 
+/* =============================================
+   Event Card – Mobile Layout Fixes
+   ============================================= */
+
+/* On narrow screens the badge can crush the event title.
+   Stack the header vertically so the name gets full width. */
+@media (max-width: 520px) {
+  .event-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .event-badge {
+    /* Prevent the badge growing too wide on its own row */
+    align-self: flex-start;
+  }
+
+  /* event-actions: allow wrapping and tighten the calendar button */
+  .event-actions {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  /* Shrink calendar button to icon + short label on small screens */
+  .calendar-download-btn .calendar-btn-label {
+    display: none;
+  }
+
+  /* Ensure the CTA arrow group doesn't get pushed off */
+  .event-cta {
+    flex: 1 0 auto;
+  }
+}
+
 /* Print */
 @media print {
   .header { padding: 1rem 0; border-bottom: 1px solid #ddd; }
