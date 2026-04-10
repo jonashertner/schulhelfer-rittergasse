@@ -475,34 +475,58 @@ function erstesSetup() {
 }
 
 // === Export Data ===
+
+/**
+ * RFC 4180-ish CSV quoting. Wraps cells containing commas, quotes or
+ * newlines in double quotes and doubles any embedded quotes. Dates are
+ * rendered via toISOString() so they round-trip cleanly.
+ */
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  var s;
+  if (value instanceof Date) {
+    s = isNaN(value.getTime()) ? '' : value.toISOString();
+  } else {
+    s = String(value);
+  }
+  if (/[",\n\r]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function csvRow(row) {
+  return row.map(csvCell).join(',');
+}
+
 function exportData() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var anlassSheet = ss.getSheetByName('Anlässe');
     var helferSheet = ss.getSheetByName('Anmeldungen');
-    
+
     if (!anlassSheet || !helferSheet) {
       return { success: false, error: 'Tabellenblätter nicht gefunden' };
     }
-    
+
     var anlaesse = anlassSheet.getDataRange().getValues();
     var anmeldungen = helferSheet.getDataRange().getValues();
-    
-    // Convert to CSV format
-    var csv = '';
-    
-    // Export Anlässe
-    csv += '=== ANLÄSSE ===\n';
+
+    // Convert to CSV format (RFC 4180 quoting)
+    var lines = [];
+
+    lines.push('=== ANLÄSSE ===');
     for (var i = 0; i < anlaesse.length; i++) {
-      csv += anlaesse[i].join(',') + '\n';
+      lines.push(csvRow(anlaesse[i]));
     }
-    
-    csv += '\n=== ANMELDUNGEN ===\n';
+
+    lines.push('');
+    lines.push('=== ANMELDUNGEN ===');
     for (var j = 0; j < anmeldungen.length; j++) {
-      csv += anmeldungen[j].join(',') + '\n';
+      lines.push(csvRow(anmeldungen[j]));
     }
-    
-    return { success: true, data: csv };
+
+    return { success: true, data: lines.join('\n') + '\n' };
   } catch (e) {
     return { success: false, error: e.toString() };
   }

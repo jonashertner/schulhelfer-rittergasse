@@ -308,37 +308,43 @@
     (function() {
       const toggle = document.getElementById('theme-toggle');
       const html = document.documentElement;
-      
+
       // Get saved theme or respect system preference
       function getPreferredTheme() {
         const saved = localStorage.getItem('theme');
         if (saved) return saved;
         return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       }
-      
-      // Apply theme
-      function setTheme(theme) {
+
+      // Apply theme to the DOM (no persistence)
+      function applyTheme(theme) {
         if (theme === 'dark') {
           html.setAttribute('data-theme', 'dark');
         } else {
           html.removeAttribute('data-theme');
         }
+      }
+
+      // Apply + persist (used only on explicit user action)
+      function setTheme(theme) {
+        applyTheme(theme);
         localStorage.setItem('theme', theme);
       }
-      
-      // Initialize
-      setTheme(getPreferredTheme());
-      
+
+      // Initialize – apply without persisting so that system preference
+      // changes still take effect until the user clicks the toggle.
+      applyTheme(getPreferredTheme());
+
       // Toggle handler
       toggle.addEventListener('click', () => {
         const current = html.getAttribute('data-theme');
         setTheme(current === 'dark' ? 'light' : 'dark');
       });
-      
+
       // Listen for system preference changes
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
         if (!localStorage.getItem('theme')) {
-          setTheme(e.matches ? 'dark' : 'light');
+          applyTheme(e.matches ? 'dark' : 'light');
         }
       });
     })();

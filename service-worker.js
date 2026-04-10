@@ -3,13 +3,19 @@
  * Provides offline support and caching for better performance
  */
 
-const CACHE_NAME = 'schulhelfer-v1';
+const CACHE_NAME = 'schulhelfer-v2';
+
+// Resolve asset URLs relative to the service worker's own location so
+// they work regardless of deployment subpath (e.g. GitHub Pages project
+// sites served under /<repo>/).
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/css/styles.css',
-  '/js/app.js'
-];
+  './',
+  './index.html',
+  './css/styles.css',
+  './js/app.js'
+].map((p) => new URL(p, self.location).href);
+
+const STATIC_ASSET_PATHNAMES = STATIC_ASSETS.map((u) => new URL(u).pathname);
 
 // Install event - cache static assets
 self.addEventListener('install', (event) => {
@@ -58,7 +64,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // For static assets, use cache-first strategy
-  if (STATIC_ASSETS.some(asset => url.pathname.endsWith(asset) || url.pathname === asset)) {
+  if (STATIC_ASSET_PATHNAMES.includes(url.pathname)) {
     event.respondWith(
       caches.match(request)
         .then((cachedResponse) => {
