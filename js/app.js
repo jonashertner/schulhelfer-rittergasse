@@ -349,11 +349,6 @@
           </span>
         </div>
         ${event.beschreibung ? `<p class="event-description">${esc(event.beschreibung)}</p>` : ''}
-        ${event.helferNamen && event.helferNamen.length > 0 ? `
-        <div class="event-helpers">
-          <span class="event-helpers-label">Bereits angemeldet:</span>
-          <span class="event-helpers-list">${event.helferNamen.map(name => esc(name)).join(', ')}</span>
-        </div>` : ''}
         <div class="event-actions">
           <div class="event-cta" aria-hidden="true">
             <span>Jetzt anmelden</span>
