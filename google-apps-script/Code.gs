@@ -255,22 +255,13 @@ function getAktiveAnlaesse() {
   var heute = new Date();
   heute.setHours(0, 0, 0, 0);
 
-  // Get all registrations to map helper names to events
-  var helferSheet = ss.getSheetByName('Anmeldungen');
-  var helferByAnlass = {};
-  if (helferSheet) {
-    var helferData = helferSheet.getDataRange().getValues();
-    for (var j = 1; j < helferData.length; j++) {
-      var anlassId = String(helferData[j][1] || '');
-      var helferName = String(helferData[j][2] || '').trim();
-      if (anlassId && helferName) {
-        if (!helferByAnlass[anlassId]) {
-          helferByAnlass[anlassId] = [];
-        }
-        helferByAnlass[anlassId].push(sanitizeInput(helferName));
-      }
-    }
-  }
+  // Note: we deliberately do NOT read the Anmeldungen sheet here. The
+  // public API response only carries counts, never names. Keeping the
+  // personal data out of the GET response reduces the privacy surface
+  // (parents' names used to be visible on the event cards to anyone
+  // visiting the public site). The per-event count still works via
+  // the 'Angemeldete' column of the Anlässe sheet which is maintained
+  // transactionally by registriereHelfer().
 
   var anlaesse = [];
   for (var i = 1; i < data.length; i++) {
@@ -299,8 +290,7 @@ function getAktiveAnlaesse() {
         beschreibung: sanitizeInput(row[6] || ''),
         maxHelfer: maxHelfer,
         aktuelleHelfer: aktuelleHelfer,
-        freiePlaetze: maxHelfer - aktuelleHelfer,
-        helferNamen: helferByAnlass[anlassId] || []
+        freiePlaetze: maxHelfer - aktuelleHelfer
       });
     }
   }
