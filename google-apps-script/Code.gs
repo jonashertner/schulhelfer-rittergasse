@@ -28,6 +28,30 @@ function sanitizeInput(str) {
 }
 
 /**
+ * Wraps a value for safe writing to a spreadsheet cell. Google Sheets
+ * (and Excel on CSV import) treat cells starting with =, +, -, @, \t
+ * or \r as formulas. This historically corrupted Swiss phone numbers
+ * like "+41 79 123 45 67" — Sheets evaluates "+41..." as a unary-plus
+ * formula and stores the number (losing the "+") or, when the
+ * expression is invalid, stores "#ERROR!".
+ *
+ * For string values matching that pattern we prepend a single quote,
+ * which Sheets consumes as a text-literal indicator: the cell stores
+ * and displays the value unchanged, but no longer tries to parse it.
+ * Non-strings (numbers, Dates, booleans, null) pass through unchanged
+ * so numeric and date columns keep their types.
+ *
+ * Reference: OWASP "CSV Injection" (formula-injection) mitigation.
+ */
+function sheetSafe(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'string') return value;
+  if (value === '') return value;
+  if (/^[=+\-@\t\r]/.test(value)) return "'" + value;
+  return value;
+}
+
+/**
  * Parse date safely
  */
 function parseDate(dateValue) {
@@ -98,7 +122,7 @@ function logAudit(action, data, success, error) {
       action,
       dataStr,
       success ? 'Ja' : 'Nein',
-      errorStr,
+      sheetSafe(errorStr),
       Session.getActiveUser().getEmail() || 'Web-App'
     ]);
     
@@ -374,14 +398,18 @@ function registriereHelfer(data) {
       }
     }
     
-    // Register (transaction-safe)
+    // Register (transaction-safe). sheetSafe() prefixes any string
+    // starting with a formula trigger (=, +, -, @, tab, CR) with a
+    // single quote so Sheets stores it as text. Without this, "+41 79
+    // ..." phone numbers are silently parsed as unary-plus formulas
+    // and either lose the leading "+" or become #ERROR!.
     helferSheet.appendRow([
-      new Date(), 
-      anlassId, 
-      name, 
-      email, 
-      telefon, 
-      anlassName
+      new Date(),
+      sheetSafe(anlassId),
+      sheetSafe(name),
+      sheetSafe(email),
+      sheetSafe(telefon),
+      sheetSafe(anlassName)
     ]);
     anlassSheet.getRange(anlassRow, 6).setValue(aktuelleHelfer + 1);
     
@@ -543,7 +571,10 @@ function exportDataAsCSV() {
     var data = [];
     for (var i = 0; i < lines.length; i++) {
       if (lines[i]) {
-        data.push([lines[i]]);
+        // sheetSafe() prefixes formula-trigger lines (e.g. the
+        // "=== ANLÄSSE ===" separators) with ' so Sheets renders
+        // them as text instead of trying to parse them as formulas.
+        data.push([sheetSafe(lines[i])]);
       }
     }
     
@@ -677,13 +708,13 @@ function anlassHinzufuegen(data) {
   }
   
   sheet.appendRow([
-    maxId + 1, 
-    name, 
-    datum, 
-    zeit, 
-    helfer, 
-    0, 
-    beschreibung
+    maxId + 1,
+    sheetSafe(name),
+    datum,
+    sheetSafe(zeit),
+    helfer,
+    0,
+    sheetSafe(beschreibung)
   ]);
   
   logAudit('ANLASS_HINZUGEFUEGT', { name: name, datum: datum }, true, null);
