@@ -179,17 +179,19 @@
 
   document.addEventListener('DOMContentLoaded', init);
 
-  function init() {
+  async function init() {
     if (!CONFIG.API_URL || CONFIG.API_URL === 'IHRE_GOOGLE_APPS_SCRIPT_URL_HIER') {
       showError('Bitte konfigurieren Sie die API_URL in index.html mit Ihrer Google Apps Script URL.');
       return;
     }
-    loadEvents();
     setupFormValidation();
     setupKeyboardNavigation();
-    restoreFormData();
     setupFormPersistence();
     setupSpreadsheetLink();
+    // loadEvents must finish before restoreFormData so that the saved
+    // event selection can be matched against the loaded event list.
+    await loadEvents();
+    restoreFormData();
   }
   
   // Setup spreadsheet link
@@ -308,10 +310,10 @@
     
     return `
       <article class="event-card" role="listitem" tabindex="0"
-        data-id="${esc(event.id)}" 
-        data-name="${esc(event.name)}" 
+        data-id="${esc(event.id)}"
+        data-name="${esc(event.name)}"
         data-date="${eventDate ? eventDate.toISOString() : ''}"
-        data-time="${eventTime ? JSON.stringify(eventTime) : ''}"
+        data-time="${eventTime ? esc(JSON.stringify(eventTime)) : ''}"
         data-description="${esc(event.beschreibung || '')}"
         aria-selected="false">
         ${countdown ? `<div class="event-countdown">
@@ -1075,11 +1077,18 @@
     }
   }
 
+  // HTML-escape text for safe interpolation in both element content and
+  // double/single-quoted attributes. Unlike the old textContent→innerHTML
+  // trick, this also escapes quotes, which is required because we inject
+  // values like `data-name="${esc(...)}"` in event-card templates.
   function esc(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text == null) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
 })();
