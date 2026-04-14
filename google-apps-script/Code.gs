@@ -18,7 +18,7 @@ var ADMIN_EMAIL = ''; // Set this to receive notifications (optional)
 // herunterladen" button on the public site for organisers.
 // Share the URL in the form   https://…/?admin=YOUR_KEY   once per device.
 // Leave empty to disable admin access entirely.
-var ADMIN_KEY = '';
+var ADMIN_KEY = 'ritter';
 
 // === Utility Functions ===
 

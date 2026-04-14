@@ -1054,8 +1054,11 @@
       const data = await response.json();
 
       if (!data.success) {
-        // Invalid/expired key — drop it and hide the button on next render.
-        if (data.error && /berechtigung|admin/i.test(data.error)) {
+        // Only drop the stored key when the backend explicitly rejects it
+        // ("Keine Berechtigung"). Other failures — missing ADMIN_KEY config
+        // on the server, unknown action, network issues — leave the key in
+        // place so the organiser isn't silently logged out.
+        if (data.error && /keine berechtigung/i.test(data.error)) {
           clearAdminKey();
           setupAdminIndicator();
           renderEvents();
