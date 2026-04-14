@@ -843,6 +843,15 @@
     return out;
   }
 
+  // Format a Date as "DD.MM.YYYY, HH:MM Uhr" (Swiss German). Avoids relying
+  // on toLocaleString options that vary across browsers.
+  function formatTimestamp(date) {
+    const d = date instanceof Date ? date : new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear() +
+      ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' Uhr';
+  }
+
   // XML-escape text for placement inside <w:t>…</w:t>.
   function xmlEscape(s) {
     return String(s == null ? '' : s)
@@ -961,7 +970,11 @@
     }
     bodyParts.push(wPara(
       'Primarstufe Rittergasse Basel · Angemeldet: ' + helpers.length + '/' + maxHelfer,
-      { size: 20, color: '666666', spacingAfter: 200 }
+      { size: 20, color: '666666', spacingAfter: 40 }
+    ));
+    bodyParts.push(wPara(
+      'Stand: ' + formatTimestamp(new Date()),
+      { size: 18, color: '999999', spacingAfter: 200 }
     ));
 
     // Table
@@ -1070,7 +1083,11 @@
       const event = data.event || AppState.findEventById(eventId) || { name: 'Anlass' };
       const bytes = buildHelpersDocx(event, data.helpers || []);
       const safeName = String(event.name || 'Anlass').replace(/[^a-z0-9äöüÄÖÜß]/gi, '_');
-      const filename = 'Helferliste_' + safeName + '.docx';
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const stamp = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+        '_' + pad(now.getHours()) + pad(now.getMinutes());
+      const filename = 'Helferliste_' + safeName + '_' + stamp + '.docx';
       downloadBinaryFile(
         bytes,
         filename,
