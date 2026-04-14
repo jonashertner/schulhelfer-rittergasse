@@ -1270,6 +1270,53 @@ a {
   }
 }
 
+/* Admin indicator */
+.admin-indicator {
+  position: fixed;
+  bottom: var(--space-4);
+  left: var(--space-4);
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--sage, #1a7d36);
+  color: var(--white, #fff);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.admin-indicator-label::before {
+  content: '🔑 ';
+}
+
+.admin-indicator-logout {
+  background: rgba(255,255,255,0.2);
+  color: inherit;
+  border: none;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-indicator-logout:hover {
+  background: rgba(255,255,255,0.35);
+}
+
+.admin-indicator-logout:focus {
+  outline: 2px solid var(--white, #fff);
+  outline-offset: 1px;
+}
+
+@media print {
+  .admin-indicator { display: none; }
+}
+
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle,
