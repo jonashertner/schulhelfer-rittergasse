@@ -10,7 +10,25 @@
 
 // === Configuration ===
 var RATE_LIMIT_WINDOW = 60; // seconds
-var RATE_LIMIT_MAX_REQUESTS = 10; // max requests per window
+var RATE_LIMIT_MAX_REQUESTS = 10; // default cap per window
+// Per-action caps. GET getEvents is the high-traffic public read, so give
+// it a generous budget. POST and admin endpoints stay tight.
+var RATE_LIMIT_CAPS = {
+  'getEvents': 120,
+  'export': 20,
+  'getHelferList': 30,
+  'POST': 10
+};
+// Shared bucket for failed admin auth attempts (brute-force mitigation,
+// independent of the per-identifier GET limit).
+var ADMIN_BRUTEFORCE_CAP = 15;
+
+// Input length caps (characters). Prevents abuse and keeps sheet clean.
+var MAX_NAME_LEN = 100;
+var MAX_TEL_LEN = 30;
+var MAX_DESC_LEN = 500;
+var MAX_EVENT_NAME_LEN = 120;
+
 var ADMIN_EMAIL = ''; // Set this to receive notifications (optional)
 
 // Secret key that unlocks admin-only endpoints (getHelferList).
@@ -59,44 +77,69 @@ function sheetSafe(value) {
 }
 
 /**
- * Parse date safely
+ * Parse a date safely. Handles:
+ *   - Date objects (as returned by Sheets for date-formatted cells)
+ *   - ISO-ish strings ("2026-04-14", "2026-04-14T12:00:00")
+ *   - Swiss "DD.MM.YYYY" strings (the format the README documents for
+ *     manually-entered events; JS's built-in Date() cannot parse these)
+ *   - DD/MM/YYYY as a tolerance fallback
  */
 function parseDate(dateValue) {
   if (!dateValue) return null;
-  try {
-    var date = new Date(dateValue);
-    if (isNaN(date.getTime())) return null;
-    return date;
-  } catch (e) {
+  if (dateValue instanceof Date) {
+    return isNaN(dateValue.getTime()) ? null : dateValue;
+  }
+  var s = String(dateValue).trim();
+  if (!s) return null;
+  // DD.MM.YYYY or D.M.YYYY
+  var m = s.match(/^(\d{1,2})[\.\/](\d{1,2})[\.\/](\d{4})$/);
+  if (m) {
+    var day = parseInt(m[1], 10);
+    var month = parseInt(m[2], 10) - 1;
+    var year = parseInt(m[3], 10);
+    var d = new Date(year, month, day);
+    if (d.getFullYear() === year && d.getMonth() === month && d.getDate() === day) {
+      return d;
+    }
     return null;
   }
+  // ISO / other formats JS handles natively
+  var parsed = new Date(s);
+  return isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /**
- * Check rate limiting
+ * Check rate limiting. Uses CacheService (auto-expires) so nothing has
+ * to be cleaned up manually – the old ScriptProperties-based approach
+ * slowly filled up, and the 10-req default globally rate-limited every
+ * anonymous GET because the client never sent an identifier.
+ *
+ * Fails open on cache errors so a transient Google-side issue doesn't
+ * lock the whole site out.
+ *
+ * @param {string} identifier   Logical bucket (action or email).
+ * @param {number} [maxRequests]  Optional override of the default cap.
+ * @returns {boolean} true when the request is allowed.
  */
-function checkRateLimit(identifier) {
-  var props = PropertiesService.getScriptProperties();
-  var key = 'rate_' + identifier;
-  var now = Math.floor(Date.now() / 1000);
-  var windowStart = now - RATE_LIMIT_WINDOW;
-  
-  var data = props.getProperty(key);
-  var requests = data ? JSON.parse(data) : [];
-  
-  // Remove old requests outside the window
-  requests = requests.filter(function(timestamp) {
-    return timestamp > windowStart;
-  });
-  
-  if (requests.length >= RATE_LIMIT_MAX_REQUESTS) {
-    return false; // Rate limit exceeded
+function checkRateLimit(identifier, maxRequests) {
+  var cap = maxRequests || RATE_LIMIT_MAX_REQUESTS;
+  try {
+    var cache = CacheService.getScriptCache();
+    var key = 'rl:' + identifier;
+    var now = Math.floor(Date.now() / 1000);
+    var windowStart = now - RATE_LIMIT_WINDOW;
+    var data = cache.get(key);
+    var requests = data ? JSON.parse(data) : [];
+    requests = requests.filter(function(ts) { return ts > windowStart; });
+    if (requests.length >= cap) return false;
+    requests.push(now);
+    // TTL = 2× window so edge-of-window requests aren't forgotten early.
+    cache.put(key, JSON.stringify(requests), RATE_LIMIT_WINDOW * 2);
+    return true;
+  } catch (e) {
+    Logger.log('Rate limit check failed (fail-open): ' + e);
+    return true;
   }
-  
-  // Add current request
-  requests.push(now);
-  props.setProperty(key, JSON.stringify(requests));
-  return true;
 }
 
 /**
@@ -164,23 +207,26 @@ function sendEmailNotification(to, subject, body, htmlBody) {
 // === GET Requests ===
 function doGet(e) {
   var output;
-  var identifier = e.parameter.identifier || 'anonymous';
-  
+  var action = (e && e.parameter && e.parameter.action) || 'getEvents';
+  // Scope the rate-limit bucket by action. The client still doesn't
+  // send an identifier for GETs, so all anonymous traffic shares the
+  // 'getEvents'/'export'/'getHelferList' buckets – but the per-action
+  // caps are generous enough for real use.
+  var identifier = action + ':' + (e.parameter.identifier || 'anon');
+  var cap = RATE_LIMIT_CAPS[action] || RATE_LIMIT_MAX_REQUESTS;
+
   try {
-    // Rate limiting
-    if (!checkRateLimit(identifier)) {
-      logAudit('GET_RATE_LIMIT', { action: e.parameter.action }, false, 'Rate limit exceeded');
-      output = JSON.stringify({ 
+    if (!checkRateLimit(identifier, cap)) {
+      logAudit('GET_RATE_LIMIT', { action: action }, false, 'Rate limit exceeded');
+      output = JSON.stringify({
         success: false,
-        error: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.' 
+        error: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.'
       });
       return ContentService
         .createTextOutput(output)
         .setMimeType(ContentService.MimeType.JSON);
     }
-    
-    var action = e.parameter.action || 'getEvents';
-    
+
     if (action === 'getEvents') {
       var events = getAktiveAnlaesse();
       output = JSON.stringify({ 
@@ -197,6 +243,14 @@ function doGet(e) {
       // Admin-only: return full registration data for a single event so
       // the frontend can build a .docx Helferliste. Requires ADMIN_KEY.
       var result = getHelferList(e.parameter.eventId, e.parameter.adminKey);
+      // Brute-force mitigation: failed auth attempts all share a global
+      // bucket independent of the per-identifier GET limit. Attackers
+      // rotating identifiers still hit this cap.
+      if (!result.success && result.error === 'Keine Berechtigung.') {
+        if (!checkRateLimit('admin-fail', ADMIN_BRUTEFORCE_CAP)) {
+          result = { success: false, error: 'Zu viele Fehlversuche. Bitte später erneut versuchen.' };
+        }
+      }
       output = JSON.stringify(result);
       logAudit('GET_HELFER_LIST', { eventId: e.parameter.eventId }, result.success, result.error);
     } else {
@@ -227,10 +281,10 @@ function doPost(e) {
   
   try {
     var data = JSON.parse(e.postData.contents);
-    identifier = data.email || 'anonymous';
-    
+    identifier = 'POST:' + (data.email || 'anonymous').toLowerCase();
+
     // Rate limiting
-    if (!checkRateLimit(identifier)) {
+    if (!checkRateLimit(identifier, RATE_LIMIT_CAPS.POST)) {
       logAudit('POST_RATE_LIMIT', { anlassId: data.anlassId }, false, 'Rate limit exceeded');
       output = JSON.stringify({ 
         success: false, 
@@ -293,7 +347,11 @@ function getAktiveAnlaesse() {
     var datumNormalized = new Date(datum);
     datumNormalized.setHours(0, 0, 0, 0);
 
-    if (datumNormalized >= heute && aktuelleHelfer < maxHelfer) {
+    // Include fully-booked events too – the frontend greys them out and
+    // disables the registration CTA, while admins still need to access
+    // the Helferliste download for full events.
+    if (datumNormalized >= heute) {
+      var freiePlaetze = Math.max(0, maxHelfer - aktuelleHelfer);
       anlaesse.push({
         id: anlassId,
         name: sanitizeInput(row[1]),
@@ -303,7 +361,8 @@ function getAktiveAnlaesse() {
         beschreibung: sanitizeInput(row[6] || ''),
         maxHelfer: maxHelfer,
         aktuelleHelfer: aktuelleHelfer,
-        freiePlaetze: maxHelfer - aktuelleHelfer
+        freiePlaetze: freiePlaetze,
+        voll: aktuelleHelfer >= maxHelfer
       });
     }
   }
@@ -418,14 +477,19 @@ function registriereHelfer(data) {
   if (name.length < 2) {
     return { success: false, message: 'Der Name muss mindestens 2 Zeichen lang sein.' };
   }
-  
+  if (name.length > MAX_NAME_LEN) {
+    return { success: false, message: 'Der Name ist zu lang (max. ' + MAX_NAME_LEN + ' Zeichen).' };
+  }
+
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { success: false, message: 'Bitte geben Sie eine gültige E-Mail-Adresse ein.' };
   }
-  
-  // Email length check
   if (email.length > 254) {
     return { success: false, message: 'Die E-Mail-Adresse ist zu lang.' };
+  }
+
+  if (telefon.length > MAX_TEL_LEN) {
+    return { success: false, message: 'Die Telefonnummer ist zu lang (max. ' + MAX_TEL_LEN + ' Zeichen).' };
   }
   
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -436,15 +500,17 @@ function registriereHelfer(data) {
     return { success: false, message: 'Der Anlass konnte nicht verarbeitet werden. Bitte versuchen Sie es später erneut.' };
   }
   
-  // Use LockService to prevent race conditions
+  // Use LockService to prevent race conditions. try/finally guarantees
+  // the lock is released even if an unexpected error escapes the body.
   var lock = LockService.getScriptLock();
+  var anlassName = '';
   try {
-    lock.waitLock(10000); // Wait up to 10 seconds
-    
+    lock.waitLock(10000); // up to 10 s
+
     // Find event
     var anlassData = anlassSheet.getDataRange().getValues();
-    var anlassRow = -1, anlassName = '', maxHelfer = 0, aktuelleHelfer = 0;
-    
+    var anlassRow = -1, maxHelfer = 0, aktuelleHelfer = 0;
+
     for (var i = 1; i < anlassData.length; i++) {
       if (String(anlassData[i][0]) === String(anlassId)) {
         anlassRow = i + 1;
@@ -454,33 +520,28 @@ function registriereHelfer(data) {
         break;
       }
     }
-    
+
     if (anlassRow === -1) {
-      lock.releaseLock();
       return { success: false, message: 'Der gewählte Anlass wurde nicht gefunden.' };
     }
-    
+
     // Re-check capacity after lock (prevent race condition)
     if (aktuelleHelfer >= maxHelfer) {
-      lock.releaseLock();
       return { success: false, message: 'Leider sind bereits alle Plätze vergeben.' };
     }
-    
-    // Improved duplicate check: name + email combination
+
+    // Duplicate check: (anlassId, email) pair – name can vary slightly
+    // in casing/whitespace between submissions by the same parent, and
+    // we don't want to accept two rows for the same event+email.
     var helferData = helferSheet.getDataRange().getValues();
     for (var j = 1; j < helferData.length; j++) {
-      var existingEmail = String(helferData[j][3] || '').toLowerCase();
-      var existingName = String(helferData[j][2] || '').toLowerCase();
+      var existingEmail = String(helferData[j][3] || '').toLowerCase().trim();
       var existingAnlassId = String(helferData[j][1] || '');
-      
-      if (existingAnlassId === anlassId &&
-          existingEmail === email &&
-          existingName === name.toLowerCase()) {
-        lock.releaseLock();
+      if (existingAnlassId === anlassId && existingEmail === email) {
         return { success: false, message: 'Sie sind bereits für diesen Anlass angemeldet.' };
       }
     }
-    
+
     // Register (transaction-safe). sheetSafe() prefixes any string
     // starting with a formula trigger (=, +, -, @, tab, CR) with a
     // single quote so Sheets stores it as text. Without this, "+41 79
@@ -495,32 +556,29 @@ function registriereHelfer(data) {
       sheetSafe(anlassName)
     ]);
     anlassSheet.getRange(anlassRow, 6).setValue(aktuelleHelfer + 1);
-    
-    lock.releaseLock();
-    
-    // Send email notification to admin (optional)
-    if (ADMIN_EMAIL) {
-      var emailBody = 'Neue Anmeldung für Schulhelfer:\n\n' +
-                     'Anlass: ' + anlassName + '\n' +
-                     'Name: ' + name + '\n' +
-                     'E-Mail: ' + email + '\n' +
-                     (telefon ? 'Telefon: ' + telefon + '\n' : '') +
-                     'Datum: ' + new Date().toLocaleString('de-CH');
-      
-      sendEmailNotification(ADMIN_EMAIL, 'Neue Anmeldung: ' + anlassName, emailBody);
-    }
-    
-    return { 
-      success: true, 
-      message: 'Vielen Dank, ' + name + '! Sie sind für «' + anlassName + '» angemeldet.' 
-    };
-    
+
   } catch (e) {
-    if (lock.hasLock()) {
-      lock.releaseLock();
-    }
+    Logger.log('registriereHelfer error: ' + e);
     return { success: false, message: 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.' };
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
+
+  // Outside the lock: optional email notification (non-critical).
+  if (ADMIN_EMAIL) {
+    var emailBody = 'Neue Anmeldung für Schulhelfer:\n\n' +
+                   'Anlass: ' + anlassName + '\n' +
+                   'Name: ' + name + '\n' +
+                   'E-Mail: ' + email + '\n' +
+                   (telefon ? 'Telefon: ' + telefon + '\n' : '') +
+                   'Datum: ' + new Date().toLocaleString('de-CH');
+    sendEmailNotification(ADMIN_EMAIL, 'Neue Anmeldung: ' + anlassName, emailBody);
+  }
+
+  return {
+    success: true,
+    message: 'Vielen Dank, ' + name + '! Sie sind für «' + anlassName + '» angemeldet.'
+  };
 }
 
 // === Setup ===
@@ -643,31 +701,65 @@ function exportData() {
   }
 }
 
+/**
+ * Write both sheets into a consolidated "Export" tab with proper
+ * columns (not as a single CSV column – the previous version dumped
+ * RFC 4180 CSV text into column A, which is unusable for review).
+ * The action=export GET endpoint (exportData()) still returns CSV for
+ * any API caller that wants it.
+ */
 function exportDataAsCSV() {
-  var result = exportData();
-  if (result.success) {
+  var ui = SpreadsheetApp.getUi();
+  try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var anlassSheet = ss.getSheetByName('Anlässe');
+    var helferSheet = ss.getSheetByName('Anmeldungen');
+    if (!anlassSheet || !helferSheet) {
+      ui.alert('Tabellenblätter nicht gefunden.');
+      return;
+    }
+    var anlaesse = anlassSheet.getDataRange().getValues();
+    var anmeldungen = helferSheet.getDataRange().getValues();
+
     var exportSheet = ss.getSheetByName('Export') || ss.insertSheet('Export');
     exportSheet.clear();
-    
-    var lines = result.data.split('\n');
-    var data = [];
-    for (var i = 0; i < lines.length; i++) {
-      if (lines[i]) {
-        // sheetSafe() prefixes formula-trigger lines (e.g. the
-        // "=== ANLÄSSE ===" separators) with ' so Sheets renders
-        // them as text instead of trying to parse them as formulas.
-        data.push([sheetSafe(lines[i])]);
-      }
+
+    var row = 1;
+    exportSheet.getRange(row, 1).setValue('=== ANLÄSSE ===')
+      .setFontWeight('bold').setFontColor('#1e3a5f').setFontSize(12);
+    row++;
+    if (anlaesse.length) {
+      exportSheet.getRange(row, 1, anlaesse.length, anlaesse[0].length).setValues(anlaesse);
+      exportSheet.getRange(row, 1, 1, anlaesse[0].length)
+        .setFontWeight('bold').setBackground('#e8eef5');
+      row += anlaesse.length;
     }
-    
-    if (data.length > 0) {
-      exportSheet.getRange(1, 1, data.length, 1).setValues(data);
-      ss.setActiveSheet(exportSheet);
-      SpreadsheetApp.getUi().alert('Export erfolgreich! Die Daten wurden im Tab "Export" gespeichert.');
+    row += 1; // blank separator
+
+    exportSheet.getRange(row, 1).setValue('=== ANMELDUNGEN ===')
+      .setFontWeight('bold').setFontColor('#1a7d36').setFontSize(12);
+    row++;
+    if (anmeldungen.length) {
+      exportSheet.getRange(row, 1, anmeldungen.length, anmeldungen[0].length).setValues(anmeldungen);
+      exportSheet.getRange(row, 1, 1, anmeldungen[0].length)
+        .setFontWeight('bold').setBackground('#e5f3e8');
+      row += anmeldungen.length;
     }
-  } else {
-    SpreadsheetApp.getUi().alert('Fehler beim Export: ' + result.error);
+
+    // Make it readable
+    var maxCols = Math.max(
+      anlaesse.length ? anlaesse[0].length : 0,
+      anmeldungen.length ? anmeldungen[0].length : 0,
+      1
+    );
+    exportSheet.autoResizeColumns(1, maxCols);
+
+    ss.setActiveSheet(exportSheet);
+    logAudit('EXPORT_DATA_UI', { anlaesse: anlaesse.length - 1, anmeldungen: anmeldungen.length - 1 }, true, null);
+    ui.alert('✅ Export erfolgreich. Daten im Tab "Export".');
+  } catch (e) {
+    logAudit('EXPORT_DATA_UI', {}, false, String(e));
+    ui.alert('Fehler beim Export: ' + e);
   }
 }
 
@@ -677,10 +769,88 @@ function onOpen() {
     .addItem('Neuer Anlass hinzufügen', 'neuerAnlassDialog')
     .addSeparator()
     .addItem('Alle Anmeldungen anzeigen', 'zeigeAnmeldungen')
-    .addItem('Daten exportieren (CSV)', 'exportDataAsCSV')
+    .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
+    .addItem('Daten exportieren', 'exportDataAsCSV')
     .addSeparator()
+    .addItem('Admin-Status prüfen', 'adminKeyStatus')
     .addItem('Audit-Log anzeigen', 'zeigeAuditLog')
     .addToUi();
+}
+
+/**
+ * Recompute the "Angemeldete" column of the Anlässe sheet from the
+ * actual rows in the Anmeldungen sheet. The transactional counter
+ * maintained by registriereHelfer() can drift from reality if an admin
+ * manually deletes or edits registration rows – this reconciles it.
+ */
+function zaehlerNeuBerechnen() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!anlassSheet || !helferSheet) {
+    ui.alert('Tabellenblätter "Anlässe" und/oder "Anmeldungen" fehlen.');
+    return;
+  }
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var helferData = helferSheet.getDataRange().getValues();
+    var counts = {};
+    for (var j = 1; j < helferData.length; j++) {
+      var id = String(helferData[j][1] || '').trim();
+      if (!id) continue;
+      counts[id] = (counts[id] || 0) + 1;
+    }
+    var anlassData = anlassSheet.getDataRange().getValues();
+    var changed = 0;
+    for (var i = 1; i < anlassData.length; i++) {
+      var eventId = String(anlassData[i][0] || '').trim();
+      if (!eventId) continue;
+      var newCount = counts[eventId] || 0;
+      var oldCount = parseInt(anlassData[i][5], 10) || 0;
+      if (newCount !== oldCount) {
+        anlassSheet.getRange(i + 1, 6).setValue(newCount);
+        changed++;
+      }
+    }
+    logAudit('ZAEHLER_NEU_BERECHNET', { changed: changed }, true, null);
+    ui.alert('✅ Zähler neu berechnet.\n\n' + changed + ' Anlass-Zeile(n) aktualisiert.');
+  } catch (e) {
+    logAudit('ZAEHLER_NEU_BERECHNET', {}, false, String(e));
+    ui.alert('Fehler: ' + e);
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+/**
+ * Show the current admin-key configuration so the organiser can check
+ * whether the Helferliste download is enabled, and warn if the key is
+ * dangerously short.
+ */
+function adminKeyStatus() {
+  var ui = SpreadsheetApp.getUi();
+  var key = ADMIN_KEY || '';
+  if (!key) {
+    ui.alert(
+      '🔑 Admin-Status',
+      'Es ist KEIN Admin-Schlüssel gesetzt.\n\n' +
+      'Der "Helferliste (Word)"-Download ist damit deaktiviert. ' +
+      'Setzen Sie ADMIN_KEY in Code.gs auf einen langen, zufälligen Wert ' +
+      'und stellen Sie die Web-App neu bereit, um Admin-Funktionen zu aktivieren.',
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+  var msg = 'Ein Admin-Schlüssel ist gesetzt (Länge: ' + key.length + ' Zeichen).';
+  if (key.length < 12) {
+    msg += '\n\n⚠️ HINWEIS: Der Schlüssel ist kurz. Für produktiven Einsatz ' +
+           'sollten Sie mindestens 16 zufällige Zeichen verwenden.';
+  }
+  msg += '\n\nZum Aktivieren auf einem Gerät die Seite einmal mit ?admin=SCHLÜSSEL ' +
+         'am Ende der URL öffnen. Der Schlüssel wird dann lokal gespeichert.';
+  ui.alert('🔑 Admin-Status', msg, ui.ButtonSet.OK);
 }
 
 function zeigeAnmeldungen() {
@@ -764,41 +934,52 @@ function neuerAnlassDialog() {
 }
 
 function anlassHinzufuegen(data) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Anlässe');
-  var values = sheet.getDataRange().getValues();
-  
-  // Sanitize input
+  // Sanitize & validate input first (outside the lock).
   var name = sanitizeInput(data.name || '');
   var zeit = sanitizeInput(data.zeit || '');
   var beschreibung = sanitizeInput(data.beschreibung || '');
   var helfer = parseInt(data.helfer) || 0;
-  
+
   if (!name || helfer < 1) {
     throw new Error('Bitte füllen Sie alle Pflichtfelder aus.');
   }
-  
-  // Validate date
+  if (name.length > MAX_EVENT_NAME_LEN) {
+    throw new Error('Der Anlass-Name ist zu lang (max. ' + MAX_EVENT_NAME_LEN + ' Zeichen).');
+  }
+  if (beschreibung.length > MAX_DESC_LEN) {
+    throw new Error('Die Beschreibung ist zu lang (max. ' + MAX_DESC_LEN + ' Zeichen).');
+  }
+
   var datum = parseDate(data.datum);
   if (!datum) {
     throw new Error('Ungültiges Datum.');
   }
-  
-  // Find max ID
-  var maxId = 0;
-  for (var i = 1; i < values.length; i++) { 
-    var id = parseInt(values[i][0]) || 0; 
-    if (id > maxId) maxId = id; 
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Anlässe');
+  if (!sheet) throw new Error('Tabellenblatt "Anlässe" nicht gefunden.');
+
+  // Lock guarantees two concurrent invocations can't compute the same
+  // maxId and collide on the ID column.
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var values = sheet.getDataRange().getValues();
+    var maxId = 0;
+    for (var i = 1; i < values.length; i++) {
+      var id = parseInt(values[i][0]) || 0;
+      if (id > maxId) maxId = id;
+    }
+    sheet.appendRow([
+      maxId + 1,
+      sheetSafe(name),
+      datum,
+      sheetSafe(zeit),
+      helfer,
+      0,
+      sheetSafe(beschreibung)
+    ]);
+    logAudit('ANLASS_HINZUGEFUEGT', { id: maxId + 1, name: name, datum: datum }, true, null);
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
-  
-  sheet.appendRow([
-    maxId + 1,
-    sheetSafe(name),
-    datum,
-    sheetSafe(zeit),
-    helfer,
-    0,
-    sheetSafe(beschreibung)
-  ]);
-  
-  logAudit('ANLASS_HINZUGEFUEGT', { name: name, datum: datum }, true, null);
 }

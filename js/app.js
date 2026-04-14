@@ -368,9 +368,14 @@
   }
 
   function createEventCard(event, index) {
-    const badgeClass = event.freiePlaetze <= 1 ? 'event-badge--last' : 
+    // "voll" is authoritative when present (server sends it); fall back
+    // to the count for older API responses.
+    const voll = event.voll === true || event.freiePlaetze <= 0;
+    const badgeClass = voll ? 'event-badge--full' :
+                       event.freiePlaetze <= 1 ? 'event-badge--last' :
                        event.freiePlaetze <= 3 ? 'event-badge--limited' : 'event-badge--available';
-    const badgeText = event.freiePlaetze <= 1 ? 'Noch 1 Helfer benötigt' :
+    const badgeText = voll ? 'Ausgebucht' :
+                      event.freiePlaetze <= 1 ? 'Noch 1 Helfer benötigt' :
                       `Noch ${event.freiePlaetze} Helfer benötigt`;
     
     // Parse date for calendar
@@ -381,12 +386,13 @@
     const countdown = getCountdown(eventDate);
     
     return `
-      <article class="event-card" role="listitem" tabindex="0"
+      <article class="event-card${voll ? ' event-card--full' : ''}" role="listitem" tabindex="0"
         data-id="${esc(event.id)}"
         data-name="${esc(event.name)}"
         data-date="${eventDate ? eventDate.toISOString() : ''}"
         data-time="${eventTime ? esc(JSON.stringify(eventTime)) : ''}"
         data-description="${esc(event.beschreibung || '')}"
+        data-voll="${voll ? '1' : '0'}"
         aria-selected="false">
         ${countdown ? `<div class="event-countdown">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -422,12 +428,16 @@
         </div>
         ${event.beschreibung ? `<p class="event-description">${esc(event.beschreibung)}</p>` : ''}
         <div class="event-actions">
+          ${voll ? `
+          <div class="event-cta event-cta--disabled" aria-hidden="true">
+            <span>Ausgebucht – danke für Ihr Interesse</span>
+          </div>` : `
           <div class="event-cta" aria-hidden="true">
             <span>Jetzt anmelden</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6"/>
             </svg>
-          </div>
+          </div>`}
           <div class="event-downloads">
             ${isAdmin() ? `
             <button type="button" class="download-btn helpers-download-btn"
@@ -1121,13 +1131,17 @@
 
   // === Event Selection ===
   function handleEventClick(e) {
-    selectEvent(e.currentTarget.dataset.id, e.currentTarget.dataset.name);
+    const card = e.currentTarget;
+    if (card.dataset.voll === '1') return; // no registration for full events
+    selectEvent(card.dataset.id, card.dataset.name);
   }
 
   function handleEventKeydown(e) {
     if (e.key === 'Enter' || e.key === ' ') {
+      const card = e.currentTarget;
+      if (card.dataset.voll === '1') return;
       e.preventDefault();
-      selectEvent(e.currentTarget.dataset.id, e.currentTarget.dataset.name);
+      selectEvent(card.dataset.id, card.dataset.name);
     }
   }
 
