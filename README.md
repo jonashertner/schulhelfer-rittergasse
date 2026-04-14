@@ -108,6 +108,30 @@ Oder direkt in der Tabelle "Anlässe":
 - **Daten exportieren**: Menü → "Daten exportieren (CSV)" – Exportiert alle Anlässe und Anmeldungen
 - **Audit-Log anzeigen**: Menü → "Audit-Log anzeigen" – Zeigt alle Systemaktionen
 - **E-Mail-Benachrichtigungen**: Setzen Sie `ADMIN_EMAIL` in `Code.gs` (Zeile 13) für Benachrichtigungen
+- **Helferliste als Word (.docx) herunterladen** *(nur Admin)*: Pro Anlass kann eine
+  Helferliste mit Name, Telefonnummer und Unterschriftsspalte als Word-Dokument
+  exportiert werden – ideal als Ausdruck für den Einsatztag.
+
+#### Admin-Zugang für die Helferliste einrichten
+
+Die Namen der angemeldeten Helfer sind auf der öffentlichen Seite bewusst nicht
+sichtbar. Der Helferlisten-Download ist deshalb durch einen Admin-Schlüssel
+geschützt:
+
+1. In `google-apps-script/Code.gs` die Konstante `ADMIN_KEY` auf einen langen,
+   zufälligen Wert setzen (z.B. `var ADMIN_KEY = 'xG7p…';`) und neu
+   bereitstellen.
+2. Den Schlüssel einmalig in der URL anhängen:
+   `https://…/schulhelfer/?admin=xG7p…`
+3. Der Schlüssel wird im Browser gespeichert, anschliessend aus der URL
+   entfernt, und auf jeder Anlass-Karte erscheint die Schaltfläche
+   **„Helferliste (Word)"**. Unten links zeigt eine kleine Plakette
+   den Admin-Modus an.
+4. Zum Abmelden auf „Abmelden" in der Plakette klicken – oder Browser-Daten
+   löschen.
+
+Nicht-Admin-Besucher:innen sehen die Schaltfläche gar nicht und können die Namen
+nicht abrufen.
 
 ---
 

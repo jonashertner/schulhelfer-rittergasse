@@ -150,6 +150,49 @@
     }
   };
 
+  // === Admin mode ===
+  // Organisers become admin by visiting the site once with ?admin=KEY in
+  // the URL. The key is persisted in localStorage and stripped from the
+  // URL so it isn't bookmarked, shared, or visible in the address bar.
+  // Regular visitors never see the "Helferliste" button.
+  const ADMIN_KEY_STORAGE = 'schulhelfer_admin_key';
+
+  function captureAdminKeyFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const key = params.get('admin');
+      if (key) {
+        localStorage.setItem(ADMIN_KEY_STORAGE, key);
+        params.delete('admin');
+        const qs = params.toString();
+        const clean = window.location.pathname +
+          (qs ? '?' + qs : '') +
+          window.location.hash;
+        window.history.replaceState({}, document.title, clean);
+      }
+    } catch (e) {
+      console.warn('Could not capture admin key:', e);
+    }
+  }
+
+  function getAdminKey() {
+    try {
+      return localStorage.getItem(ADMIN_KEY_STORAGE) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function clearAdminKey() {
+    try {
+      localStorage.removeItem(ADMIN_KEY_STORAGE);
+    } catch (e) { /* ignore */ }
+  }
+
+  function isAdmin() {
+    return !!getAdminKey();
+  }
+
   // Generate unique identifier for rate limiting (more robust than simple localStorage)
   function getIdentifier() {
     let id = localStorage.getItem('userIdentifier');
@@ -184,6 +227,8 @@
       showError('Bitte konfigurieren Sie die API_URL in index.html mit Ihrer Google Apps Script URL.');
       return;
     }
+    captureAdminKeyFromUrl();
+    setupAdminIndicator();
     setupFormValidation();
     setupKeyboardNavigation();
     setupFormPersistence();
@@ -194,6 +239,33 @@
     restoreFormData();
   }
   
+  // Show a small badge + logout link when the device is in admin mode,
+  // so organisers know the key is active and can turn it off.
+  function setupAdminIndicator() {
+    let badge = document.getElementById('admin-indicator');
+    if (!isAdmin()) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'admin-indicator';
+      badge.className = 'admin-indicator';
+      badge.innerHTML =
+        '<span class="admin-indicator-label">Admin-Modus</span>' +
+        '<button type="button" class="admin-indicator-logout" aria-label="Admin-Modus verlassen">' +
+          'Abmelden' +
+        '</button>';
+      badge.querySelector('.admin-indicator-logout').addEventListener('click', () => {
+        clearAdminKey();
+        setupAdminIndicator();
+        renderEvents();
+        announce('Admin-Modus beendet');
+      });
+      document.body.appendChild(badge);
+    }
+  }
+
   // Setup spreadsheet link
   function setupSpreadsheetLink() {
     const link = $('#spreadsheet-link');
@@ -357,6 +429,7 @@
             </svg>
           </div>
           <div class="event-downloads">
+            ${isAdmin() ? `
             <button type="button" class="download-btn helpers-download-btn"
               onclick="event.stopPropagation(); downloadHelpersList(this.closest('.event-card').dataset.id);"
               aria-label="Helferliste als Word-Datei herunterladen">
@@ -368,7 +441,7 @@
                 <line x1="9" y1="9" x2="11" y2="9"/>
               </svg>
               <span class="download-btn-label">Helferliste (Word)</span>
-            </button>
+            </button>` : ''}
             <button type="button" class="download-btn calendar-download-btn"
               onclick="event.stopPropagation(); downloadCalendarEvent(this.closest('.event-card'));"
               aria-label="Anlass zum Kalender hinzufügen">
@@ -824,14 +897,17 @@
   }
 
   // Build the word/document.xml content for the Helferliste.
-  function buildHelpersDocumentXml(event) {
-    const helpers = Array.isArray(event.helferNamen) ? event.helferNamen : [];
+  // `helpers` is an array of { name, telefon, email, zeitstempel } objects
+  // from the backend getHelferList endpoint.
+  function buildHelpersDocumentXml(event, helpers) {
+    helpers = Array.isArray(helpers) ? helpers : [];
     const maxHelfer = parseInt(event.maxHelfer, 10) || helpers.length;
     const rowCount = Math.max(maxHelfer, helpers.length);
 
     const COL_NR = 600;      // Nr. column (dxa, 1 pt = 20 dxa)
-    const COL_NAME = 5800;   // Name column
-    const COL_SIGN = 2600;   // Unterschrift column
+    const COL_NAME = 3800;   // Name column
+    const COL_TEL = 2400;    // Telefon column
+    const COL_SIGN = 2200;   // Unterschrift column
     const HEADER_COLOR = '1E3A5F';
 
     // Header row
@@ -839,16 +915,18 @@
       '<w:trPr><w:tblHeader/></w:trPr>' +
       wCell('Nr.', { width: COL_NR, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF', align: 'center' }) +
       wCell('Name', { width: COL_NAME, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
+      wCell('Telefon', { width: COL_TEL, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
       wCell('Unterschrift', { width: COL_SIGN, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
       '</w:tr>';
 
     // Data rows
     const dataRows = [];
     for (let i = 0; i < rowCount; i++) {
-      const name = helpers[i] || '';
+      const h = helpers[i] || {};
       dataRows.push('<w:tr>' +
         wCell(String(i + 1), { width: COL_NR, align: 'center' }) +
-        wCell(name, { width: COL_NAME }) +
+        wCell(h.name || '', { width: COL_NAME }) +
+        wCell(h.telefon || '', { width: COL_TEL }) +
         wCell('', { width: COL_SIGN }) +
         '</w:tr>');
     }
@@ -905,7 +983,7 @@
   }
 
   // Assemble the full .docx package (ZIP of OOXML parts) as a Uint8Array.
-  function buildHelpersDocx(event) {
+  function buildHelpersDocx(event, helpers) {
     const contentTypes =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
       '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
@@ -920,7 +998,7 @@
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
       '</Relationships>';
 
-    const documentXml = buildHelpersDocumentXml(event);
+    const documentXml = buildHelpersDocumentXml(event, helpers);
 
     return zipStore([
       { name: '[Content_Types].xml', data: contentTypes },
@@ -942,14 +1020,52 @@
     URL.revokeObjectURL(url);
   }
 
-  window.downloadHelpersList = function(eventId) {
+  window.downloadHelpersList = async function(eventId) {
+    const adminKey = getAdminKey();
+    if (!adminKey) {
+      showError('Keine Berechtigung. Öffnen Sie die Seite einmalig mit ?admin=IHR_SCHLÜSSEL in der URL.');
+      return;
+    }
+
     try {
-      const event = AppState.findEventById(eventId);
-      if (!event) {
-        showError('Der Anlass konnte nicht gefunden werden.');
+      announce('Helferliste wird geladen …');
+
+      const url = CONFIG.API_URL +
+        '?action=getHelferList' +
+        '&eventId=' + encodeURIComponent(eventId) +
+        '&adminKey=' + encodeURIComponent(adminKey) +
+        '&identifier=' + encodeURIComponent(getIdentifier()) +
+        '&_=' + Date.now();
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), AppConfig.TIMEOUT_GET);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error('Server-Fehler: ' + response.status);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        // Invalid/expired key — drop it and hide the button on next render.
+        if (data.error && /berechtigung|admin/i.test(data.error)) {
+          clearAdminKey();
+          setupAdminIndicator();
+          renderEvents();
+        }
+        showError(data.error || 'Helferliste konnte nicht geladen werden.');
         return;
       }
-      const bytes = buildHelpersDocx(event);
+
+      const event = data.event || AppState.findEventById(eventId) || { name: 'Anlass' };
+      const bytes = buildHelpersDocx(event, data.helpers || []);
       const safeName = String(event.name || 'Anlass').replace(/[^a-z0-9äöüÄÖÜß]/gi, '_');
       const filename = 'Helferliste_' + safeName + '.docx';
       downloadBinaryFile(
