@@ -357,7 +357,6 @@
             </svg>
           </div>
           <div class="event-downloads">
-            ${event.helferNamen && event.helferNamen.length > 0 ? `
             <button type="button" class="download-btn helpers-download-btn"
               onclick="event.stopPropagation(); downloadHelpersList(this.closest('.event-card').dataset.id);"
               aria-label="Helferliste als Word-Datei herunterladen">
@@ -369,7 +368,7 @@
                 <line x1="9" y1="9" x2="11" y2="9"/>
               </svg>
               <span class="download-btn-label">Helferliste (Word)</span>
-            </button>` : ''}
+            </button>
             <button type="button" class="download-btn calendar-download-btn"
               onclick="event.stopPropagation(); downloadCalendarEvent(this.closest('.event-card'));"
               aria-label="Anlass zum Kalender hinzufügen">
