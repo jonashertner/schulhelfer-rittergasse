@@ -356,17 +356,32 @@
               <polyline points="9 18 15 12 9 6"/>
             </svg>
           </div>
-          <button type="button" class="calendar-download-btn" 
-            onclick="event.stopPropagation(); downloadCalendarEvent(this.closest('.event-card'));"
-            aria-label="Anlass zum Kalender hinzufügen">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="16" y1="2" x2="16" y2="6"></line>
-              <line x1="8" y1="2" x2="8" y2="6"></line>
-              <line x1="3" y1="10" x2="21" y2="10"></line>
-            </svg>
-            <span class="calendar-btn-label">Kalendereintrag speichern</span>
-          </button>
+          <div class="event-downloads">
+            ${event.helferNamen && event.helferNamen.length > 0 ? `
+            <button type="button" class="download-btn helpers-download-btn"
+              onclick="event.stopPropagation(); downloadHelpersList(this.closest('.event-card').dataset.id);"
+              aria-label="Helferliste als Word-Datei herunterladen">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="9" y1="13" x2="15" y2="13"/>
+                <line x1="9" y1="17" x2="15" y2="17"/>
+                <line x1="9" y1="9" x2="11" y2="9"/>
+              </svg>
+              <span class="download-btn-label">Helferliste (Word)</span>
+            </button>` : ''}
+            <button type="button" class="download-btn calendar-download-btn"
+              onclick="event.stopPropagation(); downloadCalendarEvent(this.closest('.event-card'));"
+              aria-label="Anlass zum Kalender hinzufügen">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+              <span class="download-btn-label calendar-btn-label">Kalendereintrag speichern</span>
+            </button>
+          </div>
         </div>
       </article>`;
   }
@@ -650,6 +665,306 @@
     }
   }
   
+  // === Helper list (Word .docx) download ===
+  // A .docx file is a ZIP of OOXML parts. We package it client-side with a
+  // minimal STORE-only (no compression) ZIP writer — no external library.
+  // Word, LibreOffice and Google Docs all open the result natively.
+
+  // Precomputed CRC-32 table (IEEE 802.3 polynomial) used by the ZIP writer.
+  const CRC32_TABLE = (function() {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) {
+      c = CRC32_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  // Build a ZIP archive (STORE / method 0) containing the given files.
+  // files: [{ name: 'path/in/zip', data: string|Uint8Array }]
+  function zipStore(files) {
+    const encoder = new TextEncoder();
+    const localChunks = [];
+    const centralChunks = [];
+    let offset = 0;
+
+    for (const f of files) {
+      const nameBytes = encoder.encode(f.name);
+      const data = typeof f.data === 'string' ? encoder.encode(f.data) : f.data;
+      const crc = crc32(data);
+      const size = data.length;
+
+      // Local file header (30 bytes + name)
+      const lfh = new Uint8Array(30);
+      const lv = new DataView(lfh.buffer);
+      lv.setUint32(0, 0x04034b50, true);  // signature
+      lv.setUint16(4, 20, true);           // version needed
+      lv.setUint16(6, 0, true);            // flags
+      lv.setUint16(8, 0, true);            // method (STORE)
+      lv.setUint16(10, 0, true);           // mod time
+      lv.setUint16(12, 0x21, true);        // mod date (1980-01-01)
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, size, true);        // compressed size
+      lv.setUint32(22, size, true);        // uncompressed size
+      lv.setUint16(26, nameBytes.length, true);
+      lv.setUint16(28, 0, true);           // extra length
+
+      localChunks.push(lfh, nameBytes, data);
+
+      // Central directory entry (46 bytes + name)
+      const cdh = new Uint8Array(46);
+      const cv = new DataView(cdh.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);           // version made by
+      cv.setUint16(6, 20, true);           // version needed
+      cv.setUint16(8, 0, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true);
+      cv.setUint16(14, 0x21, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, size, true);
+      cv.setUint32(24, size, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint16(30, 0, true);           // extra length
+      cv.setUint16(32, 0, true);           // comment length
+      cv.setUint16(34, 0, true);           // disk start
+      cv.setUint16(36, 0, true);           // internal attrs
+      cv.setUint32(38, 0, true);           // external attrs
+      cv.setUint32(42, offset, true);      // local header offset
+
+      centralChunks.push(cdh, nameBytes);
+      offset += 30 + nameBytes.length + size;
+    }
+
+    const localTotal = offset;
+    let centralTotal = 0;
+    for (const c of centralChunks) centralTotal += c.length;
+
+    // End of central directory
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, files.length, true);
+    ev.setUint16(10, files.length, true);
+    ev.setUint32(12, centralTotal, true);
+    ev.setUint32(16, localTotal, true);
+    ev.setUint16(20, 0, true);
+
+    const out = new Uint8Array(localTotal + centralTotal + 22);
+    let pos = 0;
+    for (const c of localChunks) { out.set(c, pos); pos += c.length; }
+    for (const c of centralChunks) { out.set(c, pos); pos += c.length; }
+    out.set(eocd, pos);
+    return out;
+  }
+
+  // XML-escape text for placement inside <w:t>…</w:t>.
+  function xmlEscape(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  // Build a WordprocessingML paragraph. Sizes are in half-points (22 = 11pt).
+  function wPara(text, opts) {
+    opts = opts || {};
+    const rProps = [];
+    if (opts.bold) rProps.push('<w:b/><w:bCs/>');
+    if (opts.size) rProps.push('<w:sz w:val="' + opts.size + '"/><w:szCs w:val="' + opts.size + '"/>');
+    if (opts.color) rProps.push('<w:color w:val="' + opts.color + '"/>');
+    const rPr = rProps.length ? '<w:rPr>' + rProps.join('') + '</w:rPr>' : '';
+
+    const pProps = [];
+    if (opts.spacingAfter != null) {
+      pProps.push('<w:spacing w:after="' + opts.spacingAfter + '"/>');
+    }
+    const pPr = pProps.length ? '<w:pPr>' + pProps.join('') + '</w:pPr>' : '';
+
+    return '<w:p>' + pPr + '<w:r>' + rPr +
+      '<w:t xml:space="preserve">' + xmlEscape(text) + '</w:t>' +
+      '</w:r></w:p>';
+  }
+
+  // Build a WordprocessingML table cell.
+  function wCell(text, opts) {
+    opts = opts || {};
+    const width = opts.width || 2000;
+    const shading = opts.shading
+      ? '<w:shd w:val="clear" w:color="auto" w:fill="' + opts.shading + '"/>'
+      : '';
+    const tcPr = '<w:tcPr><w:tcW w:w="' + width + '" w:type="dxa"/>' + shading + '</w:tcPr>';
+
+    const rProps = [];
+    if (opts.bold) rProps.push('<w:b/><w:bCs/>');
+    if (opts.textColor) rProps.push('<w:color w:val="' + opts.textColor + '"/>');
+    const rPr = rProps.length ? '<w:rPr>' + rProps.join('') + '</w:rPr>' : '';
+
+    const pProps = [];
+    if (opts.align) pProps.push('<w:jc w:val="' + opts.align + '"/>');
+    const pPr = pProps.length ? '<w:pPr>' + pProps.join('') + '</w:pPr>' : '';
+
+    return '<w:tc>' + tcPr + '<w:p>' + pPr + '<w:r>' + rPr +
+      '<w:t xml:space="preserve">' + xmlEscape(text || '') + '</w:t>' +
+      '</w:r></w:p></w:tc>';
+  }
+
+  // Build the word/document.xml content for the Helferliste.
+  function buildHelpersDocumentXml(event) {
+    const helpers = Array.isArray(event.helferNamen) ? event.helferNamen : [];
+    const maxHelfer = parseInt(event.maxHelfer, 10) || helpers.length;
+    const rowCount = Math.max(maxHelfer, helpers.length);
+
+    const COL_NR = 600;      // Nr. column (dxa, 1 pt = 20 dxa)
+    const COL_NAME = 5800;   // Name column
+    const COL_SIGN = 2600;   // Unterschrift column
+    const HEADER_COLOR = '1E3A5F';
+
+    // Header row
+    const headerRow = '<w:tr>' +
+      '<w:trPr><w:tblHeader/></w:trPr>' +
+      wCell('Nr.', { width: COL_NR, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF', align: 'center' }) +
+      wCell('Name', { width: COL_NAME, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
+      wCell('Unterschrift', { width: COL_SIGN, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
+      '</w:tr>';
+
+    // Data rows
+    const dataRows = [];
+    for (let i = 0; i < rowCount; i++) {
+      const name = helpers[i] || '';
+      dataRows.push('<w:tr>' +
+        wCell(String(i + 1), { width: COL_NR, align: 'center' }) +
+        wCell(name, { width: COL_NAME }) +
+        wCell('', { width: COL_SIGN }) +
+        '</w:tr>');
+    }
+
+    const tableBorders = '<w:tblPr>' +
+      '<w:tblW w:w="5000" w:type="pct"/>' +
+      '<w:tblBorders>' +
+        '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+        '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+        '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+        '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+        '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+        '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+      '</w:tblBorders>' +
+      '</w:tblPr>';
+
+    const metaParts = [];
+    if (event.datum) metaParts.push(event.datum);
+    if (event.zeit) metaParts.push(event.zeit);
+    const metaLine = metaParts.join(' · ');
+
+    const bodyParts = [];
+    // Title (Heading-like, 18pt bold, brand color)
+    bodyParts.push(wPara('Helferliste – ' + (event.name || ''), {
+      bold: true, size: 36, color: HEADER_COLOR, spacingAfter: 60
+    }));
+    if (metaLine) {
+      bodyParts.push(wPara(metaLine, { size: 22, spacingAfter: 40 }));
+    }
+    if (event.beschreibung) {
+      bodyParts.push(wPara(String(event.beschreibung), { size: 22, spacingAfter: 40 }));
+    }
+    bodyParts.push(wPara(
+      'Primarstufe Rittergasse Basel · Angemeldet: ' + helpers.length + '/' + maxHelfer,
+      { size: 20, color: '666666', spacingAfter: 200 }
+    ));
+
+    // Table
+    bodyParts.push('<w:tbl>' + tableBorders + headerRow + dataRows.join('') + '</w:tbl>');
+
+    // Final empty paragraph + section properties (A4 portrait, 2cm margins)
+    bodyParts.push('<w:p/>');
+    bodyParts.push(
+      '<w:sectPr>' +
+        '<w:pgSz w:w="11906" w:h="16838"/>' +
+        '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/>' +
+      '</w:sectPr>'
+    );
+
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        '<w:body>' + bodyParts.join('') + '</w:body>' +
+      '</w:document>';
+  }
+
+  // Assemble the full .docx package (ZIP of OOXML parts) as a Uint8Array.
+  function buildHelpersDocx(event) {
+    const contentTypes =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+      '</Types>';
+
+    const rootRels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+      '</Relationships>';
+
+    const documentXml = buildHelpersDocumentXml(event);
+
+    return zipStore([
+      { name: '[Content_Types].xml', data: contentTypes },
+      { name: '_rels/.rels', data: rootRels },
+      { name: 'word/document.xml', data: documentXml }
+    ]);
+  }
+
+  function downloadBinaryFile(bytes, filename, mimeType) {
+    const blob = new Blob([bytes], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  window.downloadHelpersList = function(eventId) {
+    try {
+      const event = AppState.findEventById(eventId);
+      if (!event) {
+        showError('Der Anlass konnte nicht gefunden werden.');
+        return;
+      }
+      const bytes = buildHelpersDocx(event);
+      const safeName = String(event.name || 'Anlass').replace(/[^a-z0-9äöüÄÖÜß]/gi, '_');
+      const filename = 'Helferliste_' + safeName + '.docx';
+      downloadBinaryFile(
+        bytes,
+        filename,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      announce('Helferliste für "' + (event.name || '') + '" wurde heruntergeladen');
+    } catch (error) {
+      console.error('Error downloading helpers list:', error);
+      showError('Fehler beim Herunterladen der Helferliste. Bitte versuchen Sie es erneut.');
+    }
+  };
+
   // Download calendar event
   window.downloadCalendarEvent = function(eventCard) {
     try {
