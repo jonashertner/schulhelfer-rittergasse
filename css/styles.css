@@ -587,6 +587,15 @@ body {
   transform: translateX(3px);
 }
 
+.event-downloads {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.download-btn,
 .calendar-download-btn {
   display: inline-flex;
   align-items: center;
@@ -603,16 +612,19 @@ body {
   transition: all var(--duration) var(--ease);
 }
 
+.download-btn:hover,
 .calendar-download-btn:hover {
   background: var(--sage);
   color: var(--white);
 }
 
+.download-btn:focus,
 .calendar-download-btn:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--sage-light);
 }
 
+.download-btn svg,
 .calendar-download-btn svg {
   width: 12px;
   height: 12px;
@@ -1314,7 +1326,8 @@ a {
     gap: var(--space-3);
   }
 
-  /* Shrink calendar button to icon + short label on small screens */
+  /* Shrink download buttons to icon only on small screens */
+  .download-btn .download-btn-label,
   .calendar-download-btn .calendar-btn-label {
     display: none;
   }
@@ -1328,7 +1341,7 @@ a {
 /* Print */
 @media print {
   .header { padding: 1rem 0; border-bottom: 1px solid #ddd; }
-  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .calendar-download-btn, .theme-toggle { display: none; }
+  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .download-btn, .calendar-download-btn, .theme-toggle { display: none; }
   .event-card { border: 1px solid #ddd; break-inside: avoid; }
   .btn { display: none; }
 }

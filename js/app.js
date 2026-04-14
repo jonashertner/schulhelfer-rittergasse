@@ -361,17 +361,32 @@
               <polyline points="9 18 15 12 9 6"/>
             </svg>
           </div>
-          <button type="button" class="calendar-download-btn" 
-            onclick="event.stopPropagation(); downloadCalendarEvent(this.closest('.event-card'));"
-            aria-label="Anlass zum Kalender hinzufügen">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="16" y1="2" x2="16" y2="6"></line>
-              <line x1="8" y1="2" x2="8" y2="6"></line>
-              <line x1="3" y1="10" x2="21" y2="10"></line>
-            </svg>
-            <span class="calendar-btn-label">Kalendereintrag speichern</span>
-          </button>
+          <div class="event-downloads">
+            ${event.helferNamen && event.helferNamen.length > 0 ? `
+            <button type="button" class="download-btn helpers-download-btn"
+              onclick="event.stopPropagation(); downloadHelpersList(this.closest('.event-card').dataset.id);"
+              aria-label="Helferliste als Word-Datei herunterladen">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="9" y1="13" x2="15" y2="13"/>
+                <line x1="9" y1="17" x2="15" y2="17"/>
+                <line x1="9" y1="9" x2="11" y2="9"/>
+              </svg>
+              <span class="download-btn-label">Helferliste (Word)</span>
+            </button>` : ''}
+            <button type="button" class="download-btn calendar-download-btn"
+              onclick="event.stopPropagation(); downloadCalendarEvent(this.closest('.event-card'));"
+              aria-label="Anlass zum Kalender hinzufügen">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+              <span class="download-btn-label calendar-btn-label">Kalendereintrag speichern</span>
+            </button>
+          </div>
         </div>
       </article>`;
   }
@@ -655,6 +670,104 @@
     }
   }
   
+  // === Helper list (Word) download ===
+  // Generates an HTML file Word can open (.doc, MIME application/msword).
+  // Contains a printable table of registered helpers plus empty rows up to
+  // maxHelfer so organizers can use it as a sign-in / Unterschrift sheet.
+  function createHelpersWordDoc(event) {
+    const helpers = Array.isArray(event.helferNamen) ? event.helferNamen : [];
+    const maxHelfer = parseInt(event.maxHelfer, 10) || helpers.length;
+    const rowCount = Math.max(maxHelfer, helpers.length);
+
+    const rows = [];
+    for (let i = 0; i < rowCount; i++) {
+      const name = helpers[i] || '';
+      rows.push(
+        '<tr>' +
+          '<td style="width:40px;text-align:center;">' + (i + 1) + '</td>' +
+          '<td>' + esc(name) + '</td>' +
+          '<td style="width:180px;">&nbsp;</td>' +
+        '</tr>'
+      );
+    }
+
+    const title = 'Helferliste – ' + esc(event.name || '');
+    const metaParts = [];
+    if (event.datum) metaParts.push(esc(event.datum));
+    if (event.zeit) metaParts.push(esc(event.zeit));
+    const metaLine = metaParts.join(' · ');
+
+    return '<!DOCTYPE html>\n' +
+      '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+            'xmlns:w="urn:schemas-microsoft-com:office:word" ' +
+            'xmlns="http://www.w3.org/TR/REC-html40">\n' +
+      '<head>\n' +
+      '  <meta charset="utf-8">\n' +
+      '  <title>' + title + '</title>\n' +
+      '  <style>\n' +
+      '    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; }\n' +
+      '    h1 { font-size: 18pt; margin: 0 0 4pt; color: #1e3a5f; }\n' +
+      '    .meta { color: #444; margin: 0 0 4pt; font-size: 11pt; }\n' +
+      '    .sub { color: #666; margin: 0 0 14pt; font-size: 10pt; }\n' +
+      '    table { border-collapse: collapse; width: 100%; }\n' +
+      '    th, td { border: 1px solid #000; padding: 6pt 8pt; vertical-align: middle; }\n' +
+      '    th { background: #1e3a5f; color: #fff; text-align: left; font-weight: bold; }\n' +
+      '  </style>\n' +
+      '</head>\n' +
+      '<body>\n' +
+      '  <h1>' + title + '</h1>\n' +
+      (metaLine ? '  <p class="meta">' + metaLine + '</p>\n' : '') +
+      (event.beschreibung ? '  <p class="meta">' + esc(event.beschreibung) + '</p>\n' : '') +
+      '  <p class="sub">Primarstufe Rittergasse Basel · Angemeldet: ' +
+        helpers.length + '/' + maxHelfer + '</p>\n' +
+      '  <table>\n' +
+      '    <thead>\n' +
+      '      <tr>\n' +
+      '        <th style="width:40px;">Nr.</th>\n' +
+      '        <th>Name</th>\n' +
+      '        <th style="width:180px;">Unterschrift</th>\n' +
+      '      </tr>\n' +
+      '    </thead>\n' +
+      '    <tbody>\n' +
+      '      ' + rows.join('\n      ') + '\n' +
+      '    </tbody>\n' +
+      '  </table>\n' +
+      '</body>\n' +
+      '</html>';
+  }
+
+  function downloadWordFile(htmlContent, filename) {
+    // Leading BOM helps Word detect UTF-8 reliably.
+    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  window.downloadHelpersList = function(eventId) {
+    try {
+      const event = AppState.findEventById(eventId);
+      if (!event) {
+        showError('Der Anlass konnte nicht gefunden werden.');
+        return;
+      }
+      const html = createHelpersWordDoc(event);
+      const safeName = String(event.name || 'Anlass').replace(/[^a-z0-9äöüÄÖÜß]/gi, '_');
+      const filename = 'Helferliste_' + safeName + '.doc';
+      downloadWordFile(html, filename);
+      announce('Helferliste für "' + (event.name || '') + '" wurde heruntergeladen');
+    } catch (error) {
+      console.error('Error downloading helpers list:', error);
+      showError('Fehler beim Herunterladen der Helferliste. Bitte versuchen Sie es erneut.');
+    }
+  };
+
   // Download calendar event
   window.downloadCalendarEvent = function(eventCard) {
     try {
