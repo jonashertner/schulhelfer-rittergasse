@@ -13,6 +13,13 @@ var RATE_LIMIT_WINDOW = 60; // seconds
 var RATE_LIMIT_MAX_REQUESTS = 10; // max requests per window
 var ADMIN_EMAIL = ''; // Set this to receive notifications (optional)
 
+// Secret key that unlocks admin-only endpoints (getHelferList).
+// Set this to a long random string to enable the "Helferliste als Word
+// herunterladen" button on the public site for organisers.
+// Share the URL in the form   https://…/?admin=YOUR_KEY   once per device.
+// Leave empty to disable admin access entirely.
+var ADMIN_KEY = '';
+
 // === Utility Functions ===
 
 /**
@@ -186,6 +193,12 @@ function doGet(e) {
       var result = exportData();
       output = JSON.stringify(result);
       logAudit('EXPORT_DATA', {}, result.success, result.error);
+    } else if (action === 'getHelferList') {
+      // Admin-only: return full registration data for a single event so
+      // the frontend can build a .docx Helferliste. Requires ADMIN_KEY.
+      var result = getHelferList(e.parameter.eventId, e.parameter.adminKey);
+      output = JSON.stringify(result);
+      logAudit('GET_HELFER_LIST', { eventId: e.parameter.eventId }, result.success, result.error);
     } else {
       output = JSON.stringify({ 
         success: false,
@@ -301,6 +314,86 @@ function getAktiveAnlaesse() {
   });
 
   return anlaesse;
+}
+
+// === Admin-only: Helfer list for a single event ===
+// Used by the frontend to build a Word (.docx) Helferliste. Requires
+// the ADMIN_KEY config value, compared with constant-time equality.
+// Returns event metadata + every registration row for that event.
+function getHelferList(eventId, providedKey) {
+  if (!ADMIN_KEY) {
+    return { success: false, error: 'Admin-Zugriff ist nicht konfiguriert. Bitte ADMIN_KEY in Code.gs setzen.' };
+  }
+  if (!providedKey || !secureEquals(String(providedKey), String(ADMIN_KEY))) {
+    return { success: false, error: 'Keine Berechtigung.' };
+  }
+  if (!eventId) {
+    return { success: false, error: 'Anlass-ID fehlt.' };
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+
+  if (!anlassSheet || !helferSheet) {
+    return { success: false, error: 'Tabellenblätter nicht gefunden.' };
+  }
+
+  // Find event row
+  var anlassData = anlassSheet.getDataRange().getValues();
+  var eventInfo = null;
+  for (var i = 1; i < anlassData.length; i++) {
+    if (String(anlassData[i][0]) === String(eventId)) {
+      var datum = parseDate(anlassData[i][2]);
+      eventInfo = {
+        id: String(anlassData[i][0]),
+        name: sanitizeInput(anlassData[i][1] || ''),
+        datum: datum ? formatDatum(datum) : '',
+        zeit: sanitizeInput(anlassData[i][3] || ''),
+        maxHelfer: parseInt(anlassData[i][4]) || 0,
+        aktuelleHelfer: parseInt(anlassData[i][5]) || 0,
+        beschreibung: sanitizeInput(anlassData[i][6] || '')
+      };
+      break;
+    }
+  }
+
+  if (!eventInfo) {
+    return { success: false, error: 'Anlass nicht gefunden.' };
+  }
+
+  // Collect registrations for this event, preserving sheet order
+  // (which is chronological insertion order).
+  var helferData = helferSheet.getDataRange().getValues();
+  var helpers = [];
+  for (var j = 1; j < helferData.length; j++) {
+    if (String(helferData[j][1] || '') === String(eventId)) {
+      var ts = helferData[j][0];
+      helpers.push({
+        zeitstempel: ts instanceof Date ? ts.toISOString() : String(ts || ''),
+        name: sanitizeInput(String(helferData[j][2] || '')),
+        email: sanitizeInput(String(helferData[j][3] || '')),
+        telefon: sanitizeInput(String(helferData[j][4] || ''))
+      });
+    }
+  }
+
+  return {
+    success: true,
+    event: eventInfo,
+    helpers: helpers
+  };
+}
+
+// Constant-time string comparison to avoid timing side channels on the
+// admin key. Returns false fast only when lengths differ.
+function secureEquals(a, b) {
+  if (a.length !== b.length) return false;
+  var mismatch = 0;
+  for (var i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
 }
 
 function formatDatum(datum) {
