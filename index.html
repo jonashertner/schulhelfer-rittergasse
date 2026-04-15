@@ -369,100 +369,261 @@
     })();
   </script>
   
-  <!-- iOS Install Instructions (shown when native prompt isn't available) -->
-  <div id="ios-install-dialog" class="ios-install-dialog" role="dialog" aria-modal="true" aria-labelledby="ios-install-title" hidden>
-    <div class="ios-install-backdrop" data-close></div>
-    <div class="ios-install-card">
-      <button type="button" class="ios-install-close" aria-label="Schliessen" data-close>
+  <!-- Install-to-Home-Screen dialog (content populated by script based on browser context) -->
+  <div id="install-dialog" class="install-dialog" role="dialog" aria-modal="true" aria-labelledby="install-title" hidden>
+    <div class="install-backdrop" data-close></div>
+    <div class="install-card" role="document">
+      <button type="button" class="install-close" aria-label="Schliessen" data-close>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18"></line>
           <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>
       </button>
-      <h2 id="ios-install-title" class="ios-install-title">Zum Startbildschirm hinzufügen</h2>
-      <p class="ios-install-intro">So installieren Sie Schulhelfer als App:</p>
-      <ol class="ios-install-steps">
-        <li>
-          Tippen Sie unten in Safari auf das Teilen-Symbol
-          <svg class="ios-install-inline-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
-            <polyline points="16 6 12 2 8 6"></polyline>
-            <line x1="12" y1="2" x2="12" y2="15"></line>
-          </svg>
-        </li>
-        <li>Wählen Sie <strong>«Zum Home-Bildschirm»</strong>.</li>
-        <li>Bestätigen Sie mit <strong>«Hinzufügen»</strong>.</li>
-      </ol>
-      <p class="ios-install-note">In anderen Browsern wählen Sie im Menü «Zum Startbildschirm hinzufügen».</p>
+      <div id="install-hero" class="install-hero" aria-hidden="true"></div>
+      <h2 id="install-title" class="install-title"></h2>
+      <div id="install-body" class="install-body"></div>
+      <div id="install-actions" class="install-actions"></div>
+    </div>
+  </div>
+
+  <!-- Auto-prompt banner (shown on return visits only) -->
+  <div id="install-banner" class="install-banner" role="region" aria-label="Zum Startbildschirm hinzufügen" hidden>
+    <div class="install-banner-inner">
+      <div class="install-banner-icon" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+          <line x1="12" y1="8" x2="12" y2="16"></line>
+          <line x1="8" y1="12" x2="16" y2="12"></line>
+        </svg>
+      </div>
+      <div class="install-banner-text">
+        <strong>Schulhelfer als App</strong>
+        <span>Ein Tipp genügt für nächste Anlässe</span>
+      </div>
+      <div class="install-banner-actions">
+        <button type="button" id="install-banner-dismiss" class="install-banner-btn install-banner-btn--ghost">Später</button>
+        <button type="button" id="install-banner-accept" class="install-banner-btn install-banner-btn--primary">Hinzufügen</button>
+      </div>
     </div>
   </div>
 
   <!-- PWA install handler -->
   <script>
     (function(){
-      const wrap = document.getElementById('install-wrap');
-      const btn = document.getElementById('install-app-btn');
-      const dialog = document.getElementById('ios-install-dialog');
-      if (!wrap || !btn || !dialog) return;
+      const wrap    = document.getElementById('install-wrap');
+      const btn     = document.getElementById('install-app-btn');
+      const dlg     = document.getElementById('install-dialog');
+      const title   = document.getElementById('install-title');
+      const body    = document.getElementById('install-body');
+      const actions = document.getElementById('install-actions');
+      const hero    = document.getElementById('install-hero');
+      const banner  = document.getElementById('install-banner');
+      const bAccept = document.getElementById('install-banner-accept');
+      const bDismiss= document.getElementById('install-banner-dismiss');
+      if (!wrap || !btn || !dlg || !banner) return;
 
+      // --- State (visits, dismissals) --------------------------------------
+      const STORAGE_KEY = 'schulhelfer.install';
+      const DISMISS_DAYS = 14;
+      function readState(){ try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch(e) { return {}; } }
+      function writeState(p){ try { localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.assign(readState(), p))); } catch(e){} }
+      const state = readState();
+      writeState({ visits: (state.visits || 0) + 1, lastVisit: Date.now() });
+
+      // --- Environment detection -------------------------------------------
+      const ua = navigator.userAgent || '';
+      const isIOS       = /iPhone|iPad|iPod/i.test(ua) && !window.MSStream;
+      const isAndroid   = /Android/i.test(ua);
+      const isInApp     = /FBAN|FBAV|FB_IAB|FBIOS|Instagram|Line\/|Twitter|LinkedInApp|WhatsApp|Snapchat|GSA\/|Pinterest|MicroMessenger|TikTok|TelegramBot|Threads/i.test(ua);
+      const isIOSOther  = isIOS && /CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+      const isIOSSafari = isIOS && !isInApp && !isIOSOther && /Safari/i.test(ua);
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches
         || window.navigator.standalone === true;
-      if (isStandalone) return; // already installed – nothing to do
 
-      const ua = navigator.userAgent || '';
-      const isIOS = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
-      const isAndroid = /Android/.test(ua);
+      if (isStandalone) { // already installed – do nothing
+        writeState({ installed: true });
+        return;
+      }
 
-      let deferredPrompt = null;
+      // --- Visual assets ---------------------------------------------------
+      const svgShare = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>';
+      const svgSafari = '<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="10"/><polygon points="16.5 7.5 13.8 13.8 7.5 16.5 10.2 10.2" fill="currentColor" stroke="none"/></svg>';
+      const svgHome   = '<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
+      const svgBrowser= '<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor"/><circle cx="8.8" cy="6.5" r="0.6" fill="currentColor"/><circle cx="11.1" cy="6.5" r="0.6" fill="currentColor"/></svg>';
 
-      function showButton() { wrap.hidden = false; }
-      function hideButton() { wrap.hidden = true; }
-
-      function openDialog() {
-        dialog.hidden = false;
+      // --- Dialog ----------------------------------------------------------
+      let lastFocus = null;
+      function openDialog(ctx){
+        renderDialog(ctx);
+        lastFocus = document.activeElement;
+        dlg.hidden = false;
         document.body.style.overflow = 'hidden';
+        const c = dlg.querySelector('.install-close');
+        if (c) c.focus();
       }
-      function closeDialog() {
-        dialog.hidden = true;
+      function closeDialog(){
+        dlg.hidden = true;
         document.body.style.overflow = '';
+        if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
       }
-      dialog.addEventListener('click', (e) => {
-        if (e.target && e.target.matches('[data-close], [data-close] *')) closeDialog();
+      dlg.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest('[data-close]')) closeDialog();
       });
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !dialog.hidden) closeDialog();
+        if (e.key === 'Escape' && !dlg.hidden) closeDialog();
       });
 
-      // Chromium: capture the native prompt
+      async function copyLink(){
+        const url = location.href;
+        try { await navigator.clipboard.writeText(url); return true; }
+        catch(e) {
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = url; ta.setAttribute('readonly','');
+            ta.style.position='fixed'; ta.style.top='-9999px';
+            document.body.appendChild(ta); ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return !!ok;
+          } catch(_) { return false; }
+        }
+      }
+
+      function renderDialog(ctx){
+        let h='', t='', b='', a='';
+        if (ctx === 'in-app') {
+          t = 'Im richtigen Browser öffnen';
+          h = svgBrowser;
+          b = ''
+            + '<p>Sie sehen diese Seite gerade in einer App (WhatsApp, Instagram, Gmail …). '
+            + 'Das Hinzufügen zum Startbildschirm funktioniert hier leider nicht.</p>'
+            + '<p class="install-hint">Öffnen Sie die Seite in <strong>Safari</strong> (iPhone/iPad) '
+            + 'oder <strong>Chrome</strong> (Android) – zum Beispiel über das <strong>•••</strong>-Menü oben rechts '
+            + '(«In Safari öffnen» / «In Chrome öffnen»), oder kopieren Sie den Link.</p>';
+          a = ''
+            + '<button type="button" class="install-action install-action--primary" data-action="copy">Link kopieren</button>'
+            + '<button type="button" class="install-action" data-close>Schliessen</button>';
+        } else if (ctx === 'ios-other') {
+          t = 'In Safari fortfahren';
+          h = svgSafari;
+          b = ''
+            + '<p>Auf iPhone und iPad lässt sich eine Seite nur in <strong>Safari</strong> zum Startbildschirm hinzufügen. '
+            + 'Bitte öffnen Sie die Seite einmal in Safari.</p>'
+            + '<p class="install-hint">Tipp: Link kopieren, Safari starten und in die Adresszeile einfügen.</p>';
+          a = ''
+            + '<button type="button" class="install-action install-action--primary" data-action="copy">Link kopieren</button>'
+            + '<button type="button" class="install-action" data-close>Schliessen</button>';
+        } else if (ctx === 'ios-safari') {
+          t = 'Zum Startbildschirm hinzufügen';
+          h = svgShare;
+          b = ''
+            + '<ol class="install-steps">'
+            + '<li><span class="install-step-n">1</span><span>Tippen Sie in Safari auf das Teilen-Symbol <span class="install-inline-icon">' + svgShare + '</span></span></li>'
+            + '<li><span class="install-step-n">2</span><span>Scrollen Sie etwas nach unten und wählen Sie <strong>«Zum Home-Bildschirm»</strong>.</span></li>'
+            + '<li><span class="install-step-n">3</span><span>Bestätigen Sie oben rechts mit <strong>«Hinzufügen»</strong>.</span></li>'
+            + '</ol>'
+            + '<p class="install-arrow-hint" aria-hidden="true">Das Teilen-Symbol finden Sie in Safari meist unten <span class="install-arrow">▼</span></p>';
+          a = '<button type="button" class="install-action install-action--primary" data-close>Verstanden</button>';
+        } else if (ctx === 'android-no-prompt') {
+          t = 'Zum Startbildschirm hinzufügen';
+          h = svgHome;
+          b = ''
+            + '<ol class="install-steps">'
+            + '<li><span class="install-step-n">1</span><span>Tippen Sie oben rechts auf das <strong>⋮</strong>-Menü von Chrome.</span></li>'
+            + '<li><span class="install-step-n">2</span><span>Wählen Sie <strong>«App installieren»</strong> oder <strong>«Zum Startbildschirm hinzufügen»</strong>.</span></li>'
+            + '<li><span class="install-step-n">3</span><span>Bestätigen Sie mit <strong>«Installieren»</strong> bzw. <strong>«Hinzufügen»</strong>.</span></li>'
+            + '</ol>';
+          a = '<button type="button" class="install-action install-action--primary" data-close>Verstanden</button>';
+        } else {
+          t = 'Zum Startbildschirm hinzufügen';
+          h = svgHome;
+          b = '<p>Öffnen Sie das Browsermenü und wählen Sie <strong>«App installieren»</strong> oder <strong>«Zum Startbildschirm hinzufügen»</strong>.</p>';
+          a = '<button type="button" class="install-action install-action--primary" data-close>Verstanden</button>';
+        }
+        title.textContent = t;
+        hero.innerHTML    = h;
+        body.innerHTML    = b;
+        actions.innerHTML = a;
+
+        actions.querySelectorAll('[data-action="copy"]').forEach((el) => {
+          const label = el.textContent;
+          el.addEventListener('click', async () => {
+            const ok = await copyLink();
+            el.textContent = ok ? 'Kopiert ✓' : 'Bitte manuell kopieren';
+            if (ok) setTimeout(() => { el.textContent = label; }, 2200);
+          });
+        });
+      }
+
+      // --- Core button flow -----------------------------------------------
+      let deferredPrompt = null;
+
+      function showButton(){ wrap.hidden = false; }
+      function hideButton(){ wrap.hidden = true; }
+
+      function triggerInstall(){
+        if (deferredPrompt) {
+          Promise.resolve().then(async () => {
+            try {
+              deferredPrompt.prompt();
+              const choice = await deferredPrompt.userChoice;
+              if (choice && choice.outcome === 'accepted') hideButton();
+            } catch(e) {}
+            deferredPrompt = null;
+          });
+          return;
+        }
+        if (isInApp)     return openDialog('in-app');
+        if (isIOSOther)  return openDialog('ios-other');
+        if (isIOSSafari) return openDialog('ios-safari');
+        if (isAndroid)   return openDialog('android-no-prompt');
+        openDialog('desktop');
+      }
+
+      btn.addEventListener('click', triggerInstall);
+
+      // --- Native prompt capture (Android/Desktop Chromium) ---------------
       window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;
         showButton();
       });
-
       window.addEventListener('appinstalled', () => {
         deferredPrompt = null;
         hideButton();
+        hideBanner(true);
+        writeState({ installed: true });
       });
 
-      btn.addEventListener('click', async () => {
-        if (deferredPrompt) {
-          try {
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            if (outcome === 'accepted') hideButton();
-          } catch (err) { /* user dismissed */ }
-          deferredPrompt = null;
-          return;
-        }
-        // No native prompt available – show instructions
-        openDialog();
-      });
+      // --- Button visibility ----------------------------------------------
+      // Always visible on mobile (we can always offer SOMETHING useful there).
+      const isMobile = isIOS || isAndroid || /Mobi|Tablet/i.test(ua);
+      if (isMobile) showButton();
 
-      // On iOS / mobile Safari, beforeinstallprompt never fires.
-      // Show the button anyway so users can open the instructions.
-      if (isIOS || (!isAndroid && /Mobi|Tablet/i.test(ua))) {
-        showButton();
+      // --- Auto-banner (2nd+ visit, respects dismissal) -------------------
+      function showBanner(){
+        banner.hidden = false;
+        // small slide-in animation via CSS class after a tick
+        requestAnimationFrame(() => banner.classList.add('is-visible'));
+      }
+      function hideBanner(permanent){
+        banner.classList.remove('is-visible');
+        setTimeout(() => { banner.hidden = true; }, 220);
+        if (permanent) writeState({ bannerDismissedAt: Date.now() });
+      }
+
+      bAccept.addEventListener('click', () => { hideBanner(true); triggerInstall(); });
+      bDismiss.addEventListener('click', () => hideBanner(true));
+
+      const visits = (readState().visits || 0);
+      const dismissedAt = readState().bannerDismissedAt || 0;
+      const dismissExpired = (Date.now() - dismissedAt) > DISMISS_DAYS * 24 * 60 * 60 * 1000;
+      const bannerAllowed = isMobile && visits >= 2 && dismissExpired && !readState().installed;
+
+      if (bannerAllowed) {
+        // Show after a short delay so it never blocks the primary task.
+        setTimeout(showBanner, 4500);
       }
     })();
   </script>
