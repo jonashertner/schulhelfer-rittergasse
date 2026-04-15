@@ -1,0 +1,21 @@
+{
+  "name": "Schulhelfer – Primarstufe Rittergasse Basel",
+  "short_name": "Schulhelfer",
+  "description": "Anmeldeformular für Schulanlässe der Primarstufe Rittergasse Basel",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "de-CH",
+  "dir": "ltr",
+  "theme_color": "#1e3a5f",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
