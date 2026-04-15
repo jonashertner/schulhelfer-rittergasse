@@ -511,6 +511,29 @@ body {
   color: #a47a7a;
 }
 
+.event-badge--full {
+  background: var(--gray-100);
+  color: var(--gray-500);
+}
+
+/* Fully-booked events stay visible (so admins can still pull the
+   Helferliste) but are visually muted and not selectable. */
+.event-card--full {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.event-card--full:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.event-cta--disabled {
+  color: var(--gray-500);
+  font-style: italic;
+  font-weight: 500;
+}
+
 .event-meta {
   display: flex;
   flex-wrap: wrap;

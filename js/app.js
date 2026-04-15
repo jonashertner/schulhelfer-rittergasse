@@ -368,9 +368,14 @@
   }
 
   function createEventCard(event, index) {
-    const badgeClass = event.freiePlaetze <= 1 ? 'event-badge--last' : 
+    // "voll" is authoritative when present (server sends it); fall back
+    // to the count for older API responses.
+    const voll = event.voll === true || event.freiePlaetze <= 0;
+    const badgeClass = voll ? 'event-badge--full' :
+                       event.freiePlaetze <= 1 ? 'event-badge--last' :
                        event.freiePlaetze <= 3 ? 'event-badge--limited' : 'event-badge--available';
-    const badgeText = event.freiePlaetze <= 1 ? 'Noch 1 Helfer benötigt' :
+    const badgeText = voll ? 'Ausgebucht' :
+                      event.freiePlaetze <= 1 ? 'Noch 1 Helfer benötigt' :
                       `Noch ${event.freiePlaetze} Helfer benötigt`;
     
     // Parse date for calendar
@@ -381,12 +386,13 @@
     const countdown = getCountdown(eventDate);
     
     return `
-      <article class="event-card" role="listitem" tabindex="0"
+      <article class="event-card${voll ? ' event-card--full' : ''}" role="listitem" tabindex="0"
         data-id="${esc(event.id)}"
         data-name="${esc(event.name)}"
         data-date="${eventDate ? eventDate.toISOString() : ''}"
         data-time="${eventTime ? esc(JSON.stringify(eventTime)) : ''}"
         data-description="${esc(event.beschreibung || '')}"
+        data-voll="${voll ? '1' : '0'}"
         aria-selected="false">
         ${countdown ? `<div class="event-countdown">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -422,12 +428,16 @@
         </div>
         ${event.beschreibung ? `<p class="event-description">${esc(event.beschreibung)}</p>` : ''}
         <div class="event-actions">
+          ${voll ? `
+          <div class="event-cta event-cta--disabled" aria-hidden="true">
+            <span>Ausgebucht – danke für Ihr Interesse</span>
+          </div>` : `
           <div class="event-cta" aria-hidden="true">
             <span>Jetzt anmelden</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6"/>
             </svg>
-          </div>
+          </div>`}
           <div class="event-downloads">
             ${isAdmin() ? `
             <button type="button" class="download-btn helpers-download-btn"
@@ -843,6 +853,15 @@
     return out;
   }
 
+  // Format a Date as "DD.MM.YYYY, HH:MM Uhr" (Swiss German). Avoids relying
+  // on toLocaleString options that vary across browsers.
+  function formatTimestamp(date) {
+    const d = date instanceof Date ? date : new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear() +
+      ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' Uhr';
+  }
+
   // XML-escape text for placement inside <w:t>…</w:t>.
   function xmlEscape(s) {
     return String(s == null ? '' : s)
@@ -961,7 +980,11 @@
     }
     bodyParts.push(wPara(
       'Primarstufe Rittergasse Basel · Angemeldet: ' + helpers.length + '/' + maxHelfer,
-      { size: 20, color: '666666', spacingAfter: 200 }
+      { size: 20, color: '666666', spacingAfter: 40 }
+    ));
+    bodyParts.push(wPara(
+      'Stand: ' + formatTimestamp(new Date()),
+      { size: 18, color: '999999', spacingAfter: 200 }
     ));
 
     // Table
@@ -1054,8 +1077,11 @@
       const data = await response.json();
 
       if (!data.success) {
-        // Invalid/expired key — drop it and hide the button on next render.
-        if (data.error && /berechtigung|admin/i.test(data.error)) {
+        // Only drop the stored key when the backend explicitly rejects it
+        // ("Keine Berechtigung"). Other failures — missing ADMIN_KEY config
+        // on the server, unknown action, network issues — leave the key in
+        // place so the organiser isn't silently logged out.
+        if (data.error && /keine berechtigung/i.test(data.error)) {
           clearAdminKey();
           setupAdminIndicator();
           renderEvents();
@@ -1067,7 +1093,11 @@
       const event = data.event || AppState.findEventById(eventId) || { name: 'Anlass' };
       const bytes = buildHelpersDocx(event, data.helpers || []);
       const safeName = String(event.name || 'Anlass').replace(/[^a-z0-9äöüÄÖÜß]/gi, '_');
-      const filename = 'Helferliste_' + safeName + '.docx';
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const stamp = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+        '_' + pad(now.getHours()) + pad(now.getMinutes());
+      const filename = 'Helferliste_' + safeName + '_' + stamp + '.docx';
       downloadBinaryFile(
         bytes,
         filename,
@@ -1101,13 +1131,17 @@
 
   // === Event Selection ===
   function handleEventClick(e) {
-    selectEvent(e.currentTarget.dataset.id, e.currentTarget.dataset.name);
+    const card = e.currentTarget;
+    if (card.dataset.voll === '1') return; // no registration for full events
+    selectEvent(card.dataset.id, card.dataset.name);
   }
 
   function handleEventKeydown(e) {
     if (e.key === 'Enter' || e.key === ' ') {
+      const card = e.currentTarget;
+      if (card.dataset.voll === '1') return;
       e.preventDefault();
-      selectEvent(e.currentTarget.dataset.id, e.currentTarget.dataset.name);
+      selectEvent(card.dataset.id, card.dataset.name);
     }
   }
 
