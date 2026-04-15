@@ -872,19 +872,46 @@
       .replace(/'/g, '&apos;');
   }
 
-  // Build a WordprocessingML paragraph. Sizes are in half-points (22 = 11pt).
+  // Default run-properties font. Embedding the font directly in each
+  // run is pragmatic – avoiding a styles.xml part keeps the package to
+  // three entries and works in Word, Pages and LibreOffice.
+  const DEFAULT_FONT_RPR = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>';
+
+  // Build the shared rPr body (inside <w:rPr>…</w:rPr>) for a run with
+  // typographic options.
+  //   bold, italic         → booleans
+  //   caps                 → small-caps via <w:caps/>
+  //   size                 → half-points (22 = 11pt)
+  //   charSpacing          → twentieths of a point, >0 tracks wider
+  //   color                → hex (RRGGBB) without leading '#'
+  function rPrBody(opts) {
+    const parts = [DEFAULT_FONT_RPR];
+    if (opts.bold)          parts.push('<w:b/><w:bCs/>');
+    if (opts.italic)        parts.push('<w:i/><w:iCs/>');
+    if (opts.caps)          parts.push('<w:caps/>');
+    if (opts.size)          parts.push('<w:sz w:val="' + opts.size + '"/><w:szCs w:val="' + opts.size + '"/>');
+    if (opts.charSpacing)   parts.push('<w:spacing w:val="' + opts.charSpacing + '"/>');
+    if (opts.color)         parts.push('<w:color w:val="' + opts.color + '"/>');
+    return parts.join('');
+  }
+
+  // Build a WordprocessingML paragraph. Sizes are half-points (22 =
+  // 11pt). Spacing values are twentieths of a point (240 = 12pt).
+  // lineHeight uses auto rule: 240 = single line, 288 = ~1.2, 360 = 1.5.
   function wPara(text, opts) {
     opts = opts || {};
-    const rProps = [];
-    if (opts.bold) rProps.push('<w:b/><w:bCs/>');
-    if (opts.size) rProps.push('<w:sz w:val="' + opts.size + '"/><w:szCs w:val="' + opts.size + '"/>');
-    if (opts.color) rProps.push('<w:color w:val="' + opts.color + '"/>');
-    const rPr = rProps.length ? '<w:rPr>' + rProps.join('') + '</w:rPr>' : '';
+    const rPr = '<w:rPr>' + rPrBody(opts) + '</w:rPr>';
 
     const pProps = [];
-    if (opts.spacingAfter != null) {
-      pProps.push('<w:spacing w:after="' + opts.spacingAfter + '"/>');
+    if (opts.align) pProps.push('<w:jc w:val="' + opts.align + '"/>');
+    const spacingAttrs = [];
+    if (opts.spacingBefore != null) spacingAttrs.push('w:before="' + opts.spacingBefore + '"');
+    if (opts.spacingAfter != null)  spacingAttrs.push('w:after="' + opts.spacingAfter + '"');
+    if (opts.lineHeight != null) {
+      spacingAttrs.push('w:line="' + opts.lineHeight + '"');
+      spacingAttrs.push('w:lineRule="auto"');
     }
+    if (spacingAttrs.length) pProps.push('<w:spacing ' + spacingAttrs.join(' ') + '/>');
     const pPr = pProps.length ? '<w:pPr>' + pProps.join('') + '</w:pPr>' : '';
 
     return '<w:p>' + pPr + '<w:r>' + rPr +
@@ -899,16 +926,28 @@
     const shading = opts.shading
       ? '<w:shd w:val="clear" w:color="auto" w:fill="' + opts.shading + '"/>'
       : '';
-    const tcPr = '<w:tcPr><w:tcW w:w="' + width + '" w:type="dxa"/>' + shading + '</w:tcPr>';
+    const vAlign = '<w:vAlign w:val="' + (opts.vAlign || 'center') + '"/>';
+    const tcBorders = opts.borders || '';
+    const tcPr = '<w:tcPr><w:tcW w:w="' + width + '" w:type="dxa"/>' +
+      shading + tcBorders + vAlign + '</w:tcPr>';
 
-    const rProps = [];
-    if (opts.bold) rProps.push('<w:b/><w:bCs/>');
-    if (opts.textColor) rProps.push('<w:color w:val="' + opts.textColor + '"/>');
-    const rPr = rProps.length ? '<w:rPr>' + rProps.join('') + '</w:rPr>' : '';
+    // textColor is the legacy name for cell text colour; map it.
+    const runOpts = {
+      bold: opts.bold,
+      italic: opts.italic,
+      caps: opts.caps,
+      charSpacing: opts.charSpacing,
+      size: opts.size,
+      color: opts.textColor || opts.color
+    };
+    const rPr = '<w:rPr>' + rPrBody(runOpts) + '</w:rPr>';
 
     const pProps = [];
     if (opts.align) pProps.push('<w:jc w:val="' + opts.align + '"/>');
-    const pPr = pProps.length ? '<w:pPr>' + pProps.join('') + '</w:pPr>' : '';
+    // Prevent a stray "Normal" style from injecting after-spacing that
+    // would visually misalign rows of different cell counts.
+    pProps.push('<w:spacing w:before="0" w:after="0"/>');
+    const pPr = '<w:pPr>' + pProps.join('') + '</w:pPr>';
 
     return '<w:tc>' + tcPr + '<w:p>' + pPr + '<w:r>' + rPr +
       '<w:t xml:space="preserve">' + xmlEscape(text || '') + '</w:t>' +
@@ -918,77 +957,113 @@
   // Build the word/document.xml content for the Helferliste.
   // `helpers` is an array of { name, telefon, email, zeitstempel } objects
   // from the backend getHelferList endpoint.
+  //
+  // Design: monochrome, elegant, printable. Only black text, with row
+  // separators in a light grey. Three columns (no signature column).
+  // Empty rows are included up to `maxHelfer` so the printed sheet has
+  // space for last-minute write-ins.
   function buildHelpersDocumentXml(event, helpers) {
     helpers = Array.isArray(helpers) ? helpers : [];
     const maxHelfer = parseInt(event.maxHelfer, 10) || helpers.length;
     const rowCount = Math.max(maxHelfer, helpers.length);
 
-    const COL_NR = 600;      // Nr. column (dxa, 1 pt = 20 dxa)
-    const COL_NAME = 3800;   // Name column
-    const COL_TEL = 2400;    // Telefon column
-    const COL_SIGN = 2200;   // Unterschrift column
-    const HEADER_COLOR = '1E3A5F';
+    // A4 portrait content width @ 2cm margins = 11906 − 2·1134 = 9638 dxa
+    const COL_NR   = 700;
+    const COL_NAME = 5600;
+    const COL_TEL  = 3338;
 
-    // Header row
+    // ---- Table ----------------------------------------------------
     const headerRow = '<w:tr>' +
-      '<w:trPr><w:tblHeader/></w:trPr>' +
-      wCell('Nr.', { width: COL_NR, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF', align: 'center' }) +
-      wCell('Name', { width: COL_NAME, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
-      wCell('Telefon', { width: COL_TEL, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
-      wCell('Unterschrift', { width: COL_SIGN, bold: true, shading: HEADER_COLOR, textColor: 'FFFFFF' }) +
+      '<w:trPr><w:tblHeader/><w:trHeight w:val="520" w:hRule="atLeast"/></w:trPr>' +
+      wCell('Nr.',     { width: COL_NR,   bold: true, size: 22, caps: true, charSpacing: 20, align: 'center' }) +
+      wCell('Name',    { width: COL_NAME, bold: true, size: 22, caps: true, charSpacing: 20 }) +
+      wCell('Telefon', { width: COL_TEL,  bold: true, size: 22, caps: true, charSpacing: 20 }) +
       '</w:tr>';
 
-    // Data rows
     const dataRows = [];
     for (let i = 0; i < rowCount; i++) {
       const h = helpers[i] || {};
       dataRows.push('<w:tr>' +
-        wCell(String(i + 1), { width: COL_NR, align: 'center' }) +
-        wCell(h.name || '', { width: COL_NAME }) +
-        wCell(h.telefon || '', { width: COL_TEL }) +
-        wCell('', { width: COL_SIGN }) +
+        '<w:trPr><w:trHeight w:val="520" w:hRule="atLeast"/></w:trPr>' +
+        wCell(String(i + 1), { width: COL_NR,   size: 22, align: 'center' }) +
+        wCell(h.name || '',   { width: COL_NAME, size: 22 }) +
+        wCell(h.telefon || '', { width: COL_TEL,  size: 22 }) +
         '</w:tr>');
     }
 
-    const tableBorders = '<w:tblPr>' +
+    // Borders: strong black top/bottom, fine grey between rows,
+    // no vertical lines – a magazine-style table that reads clean.
+    const tableProps = '<w:tblPr>' +
       '<w:tblW w:w="5000" w:type="pct"/>' +
+      '<w:tblInd w:w="0" w:type="dxa"/>' +
       '<w:tblBorders>' +
-        '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
-        '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
-        '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
-        '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
-        '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
-        '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+        '<w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/>' +
+        '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="000000"/>' +
+        '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="B8B8B8"/>' +
       '</w:tblBorders>' +
+      '<w:tblCellMar>' +
+        '<w:top w:w="120" w:type="dxa"/>' +
+        '<w:bottom w:w="120" w:type="dxa"/>' +
+        '<w:left w:w="160" w:type="dxa"/>' +
+        '<w:right w:w="160" w:type="dxa"/>' +
+      '</w:tblCellMar>' +
       '</w:tblPr>';
+    const tableGrid = '<w:tblGrid>' +
+      '<w:gridCol w:w="' + COL_NR + '"/>' +
+      '<w:gridCol w:w="' + COL_NAME + '"/>' +
+      '<w:gridCol w:w="' + COL_TEL + '"/>' +
+      '</w:tblGrid>';
 
+    // ---- Front matter --------------------------------------------
     const metaParts = [];
     if (event.datum) metaParts.push(event.datum);
-    if (event.zeit) metaParts.push(event.zeit);
-    const metaLine = metaParts.join(' · ');
+    if (event.zeit)  metaParts.push(event.zeit);
+    const metaLine = metaParts.join('  ·  ');
 
     const bodyParts = [];
-    // Title (Heading-like, 18pt bold, brand color)
-    bodyParts.push(wPara('Helferliste – ' + (event.name || ''), {
-      bold: true, size: 36, color: HEADER_COLOR, spacingAfter: 60
+
+    // Kicker: small-caps, letter-spaced, quiet.
+    bodyParts.push(wPara('Helferliste', {
+      bold: true, size: 22, caps: true, charSpacing: 40,
+      spacingAfter: 80
     }));
+
+    // Main subject: the event name, set large.
+    bodyParts.push(wPara(event.name || '', {
+      bold: true, size: 48, lineHeight: 260,
+      spacingAfter: 160
+    }));
+
+    // Date · time.
     if (metaLine) {
-      bodyParts.push(wPara(metaLine, { size: 22, spacingAfter: 40 }));
+      bodyParts.push(wPara(metaLine, {
+        italic: true, size: 24, spacingAfter: 100
+      }));
     }
+
+    // Description, if any.
     if (event.beschreibung) {
-      bodyParts.push(wPara(String(event.beschreibung), { size: 22, spacingAfter: 40 }));
+      bodyParts.push(wPara(String(event.beschreibung), {
+        size: 22, lineHeight: 300, spacingAfter: 200
+      }));
+    } else {
+      // Small breathing room when there is no description
+      bodyParts.push(wPara('', { size: 8, spacingAfter: 80 }));
     }
+
+    // Summary + timestamp, both small and subtle (still black).
     bodyParts.push(wPara(
-      'Primarstufe Rittergasse Basel · Angemeldet: ' + helpers.length + '/' + maxHelfer,
-      { size: 20, color: '666666', spacingAfter: 40 }
+      'Angemeldet: ' + helpers.length + ' von ' + maxHelfer +
+        '  ·  Primarstufe Rittergasse Basel',
+      { size: 18, spacingAfter: 40 }
     ));
     bodyParts.push(wPara(
       'Stand: ' + formatTimestamp(new Date()),
-      { size: 18, color: '999999', spacingAfter: 200 }
+      { size: 18, italic: true, spacingAfter: 360 }
     ));
 
-    // Table
-    bodyParts.push('<w:tbl>' + tableBorders + headerRow + dataRows.join('') + '</w:tbl>');
+    // ---- Table ---------------------------------------------------
+    bodyParts.push('<w:tbl>' + tableProps + tableGrid + headerRow + dataRows.join('') + '</w:tbl>');
 
     // Final empty paragraph + section properties (A4 portrait, 2cm margins)
     bodyParts.push('<w:p/>');

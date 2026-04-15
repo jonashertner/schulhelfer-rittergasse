@@ -77,6 +77,64 @@ function sheetSafe(value) {
 }
 
 /**
+ * Normalize a Swiss phone number to canonical international format
+ * "+41 XX XXX XX XX". Parents type phone numbers inconsistently – with
+ * or without the country code, with various separators – and without
+ * normalization the spreadsheet ends up with every variant of the same
+ * number. This function harmonises all the common Swiss-formatted
+ * inputs to one stored-and-printed form.
+ *
+ * Handles:
+ *   "079 123 45 67"     → "+41 79 123 45 67"
+ *   "+41 79 123 45 67"  → "+41 79 123 45 67"
+ *   "+41791234567"      → "+41 79 123 45 67"
+ *   "0041 79 123 45 67" → "+41 79 123 45 67"
+ *   "0041791234567"     → "+41 79 123 45 67"
+ *   "(079) 123-45-67"   → "+41 79 123 45 67"
+ *   "061 999 00 00"     → "+41 61 999 00 00"  (Swiss landline)
+ *   "+49 30 12345678"   → "+49 30 12345678"    (foreign: untouched format)
+ *   ""                  → ""
+ *   "Bitte anrufen"     → "Bitte anrufen"      (unparseable: untouched)
+ */
+function normalizePhone(raw) {
+  if (raw === null || raw === undefined) return '';
+  var original = String(raw).trim();
+  if (!original) return '';
+
+  var hasPlus = original.charAt(0) === '+';
+  var digits = original.replace(/\D/g, '');
+  if (!digits) return original;
+
+  // 00xx international prefix → +xx
+  if (digits.indexOf('00') === 0 && !hasPlus) {
+    digits = digits.slice(2);
+    hasPlus = true;
+  }
+
+  // Swiss national format: leading 0 with 10 digits total (0 + 9)
+  if (!hasPlus && digits.charAt(0) === '0' && digits.length === 10) {
+    digits = '41' + digits.slice(1);
+    hasPlus = true;
+  }
+
+  // Swiss international format: 41 + 9 subscriber digits = 11 digits
+  if (digits.indexOf('41') === 0 && digits.length === 11) {
+    return '+41 ' + digits.substr(2, 2) + ' ' + digits.substr(4, 3) +
+           ' ' + digits.substr(7, 2) + ' ' + digits.substr(9, 2);
+  }
+
+  // Non-Swiss international (e.g. "+49..."): keep as originally typed
+  // (trimmed). We don't know the local grouping convention, so losing
+  // the spaces would be worse than leaving them alone.
+  if (hasPlus) return original;
+
+  // Nothing matched our Swiss heuristics (no leading 0, no +, unusual
+  // length). Return the original trimmed input unchanged – we never
+  // discard what the parent typed.
+  return original;
+}
+
+/**
  * Parse a date safely. Handles:
  *   - Date objects (as returned by Sheets for date-formatted cells)
  *   - ISO-ish strings ("2026-04-14", "2026-04-14T12:00:00")
@@ -432,7 +490,10 @@ function getHelferList(eventId, providedKey) {
         zeitstempel: ts instanceof Date ? ts.toISOString() : String(ts || ''),
         name: sanitizeInput(String(helferData[j][2] || '')),
         email: sanitizeInput(String(helferData[j][3] || '')),
-        telefon: sanitizeInput(String(helferData[j][4] || ''))
+        // Normalize on read so pre-existing rows (registered before the
+        // write-side normalization was deployed, or edited manually in
+        // the sheet) also display in canonical form.
+        telefon: normalizePhone(sanitizeInput(String(helferData[j][4] || '')))
       });
     }
   }
@@ -467,7 +528,9 @@ function registriereHelfer(data) {
   var anlassId = sanitizeInput(data.anlassId);
   var name = sanitizeInput(data.name || '');
   var email = (data.email || '').trim().toLowerCase();
-  var telefon = sanitizeInput(data.telefon || '');
+  // Normalize phone to canonical Swiss "+41 XX XXX XX XX" so the
+  // stored value is consistent regardless of how the parent typed it.
+  var telefon = normalizePhone(sanitizeInput(data.telefon || ''));
   
   // Validation
   if (!anlassId || !name || !email) {
