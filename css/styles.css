@@ -1385,10 +1385,153 @@ a {
   }
 }
 
+/* ===== Install to Home Screen ===== */
+
+.footer-install {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.install-app-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.65rem 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
+}
+
+.install-app-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.install-app-btn:active {
+  transform: scale(0.97);
+}
+
+.install-app-btn:focus-visible {
+  outline: 2px solid var(--sage, #7c9a92);
+  outline-offset: 2px;
+}
+
+.install-app-btn svg {
+  flex-shrink: 0;
+}
+
+/* ===== iOS Install Instructions Dialog ===== */
+
+.ios-install-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.ios-install-dialog[hidden] { display: none; }
+
+.ios-install-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.ios-install-card {
+  position: relative;
+  max-width: 420px;
+  width: 100%;
+  background: var(--white, #fff);
+  color: var(--gray-900, #1a1a1a);
+  border-radius: var(--radius-lg, 14px);
+  padding: calc(var(--space-6) + 0.25rem) var(--space-5) var(--space-5);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: ios-install-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+[data-theme="dark"] .ios-install-card {
+  background: var(--gray-100, #222);
+  color: var(--gray-900, #f0f0f0);
+}
+
+@keyframes ios-install-pop {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+.ios-install-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  border-radius: var(--radius-full, 999px);
+}
+
+.ios-install-close:hover { opacity: 1; background: rgba(0,0,0,0.05); }
+[data-theme="dark"] .ios-install-close:hover { background: rgba(255,255,255,0.08); }
+
+.ios-install-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.ios-install-intro {
+  margin: 0 0 var(--space-3);
+  color: var(--gray-600, #555);
+  font-size: 0.95rem;
+}
+
+.ios-install-steps {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.25rem;
+  line-height: 1.6;
+}
+
+.ios-install-steps li { margin-bottom: 0.35rem; }
+
+.ios-install-inline-icon {
+  vertical-align: -4px;
+  margin: 0 0.15rem;
+}
+
+.ios-install-note {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--gray-200, #e5e5e5);
+  color: var(--gray-600, #666);
+  font-size: 0.85rem;
+}
+
+[data-theme="dark"] .ios-install-note {
+  border-top-color: rgba(255,255,255,0.1);
+}
+
 /* Print */
 @media print {
   .header { padding: 1rem 0; border-bottom: 1px solid #ddd; }
-  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .download-btn, .calendar-download-btn, .theme-toggle { display: none; }
+  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .download-btn, .calendar-download-btn, .theme-toggle, .footer-install, .ios-install-dialog { display: none; }
   .event-card { border: 1px solid #ddd; break-inside: avoid; }
   .btn { display: none; }
 }

@@ -22,6 +22,13 @@
 
   <!-- Favicon -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏰</text></svg>">
+
+  <!-- PWA: installable on Home Screen -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Schulhelfer">
 </head>
 <body>
   <!-- Skip Link -->
@@ -239,6 +246,18 @@
           Vielen Dank für Ihre Unterstützung!
         </p>
       </div>
+      <!-- Install to Home Screen (hidden by default; shown when installable) -->
+      <div class="footer-install" id="install-wrap" hidden>
+        <button type="button" id="install-app-btn" class="install-app-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+            <line x1="12" y1="8" x2="12" y2="16"></line>
+            <line x1="8" y1="12" x2="16" y2="12"></line>
+          </svg>
+          <span>Zum Startbildschirm hinzufügen</span>
+        </button>
+      </div>
+
       <div class="footer-bottom">
         <div class="footer-links">
           <a href="#main-content" class="back-to-top">
@@ -350,6 +369,104 @@
     })();
   </script>
   
+  <!-- iOS Install Instructions (shown when native prompt isn't available) -->
+  <div id="ios-install-dialog" class="ios-install-dialog" role="dialog" aria-modal="true" aria-labelledby="ios-install-title" hidden>
+    <div class="ios-install-backdrop" data-close></div>
+    <div class="ios-install-card">
+      <button type="button" class="ios-install-close" aria-label="Schliessen" data-close>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+      <h2 id="ios-install-title" class="ios-install-title">Zum Startbildschirm hinzufügen</h2>
+      <p class="ios-install-intro">So installieren Sie Schulhelfer als App:</p>
+      <ol class="ios-install-steps">
+        <li>
+          Tippen Sie unten in Safari auf das Teilen-Symbol
+          <svg class="ios-install-inline-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+            <polyline points="16 6 12 2 8 6"></polyline>
+            <line x1="12" y1="2" x2="12" y2="15"></line>
+          </svg>
+        </li>
+        <li>Wählen Sie <strong>«Zum Home-Bildschirm»</strong>.</li>
+        <li>Bestätigen Sie mit <strong>«Hinzufügen»</strong>.</li>
+      </ol>
+      <p class="ios-install-note">In anderen Browsern wählen Sie im Menü «Zum Startbildschirm hinzufügen».</p>
+    </div>
+  </div>
+
+  <!-- PWA install handler -->
+  <script>
+    (function(){
+      const wrap = document.getElementById('install-wrap');
+      const btn = document.getElementById('install-app-btn');
+      const dialog = document.getElementById('ios-install-dialog');
+      if (!wrap || !btn || !dialog) return;
+
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true;
+      if (isStandalone) return; // already installed – nothing to do
+
+      const ua = navigator.userAgent || '';
+      const isIOS = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
+      const isAndroid = /Android/.test(ua);
+
+      let deferredPrompt = null;
+
+      function showButton() { wrap.hidden = false; }
+      function hideButton() { wrap.hidden = true; }
+
+      function openDialog() {
+        dialog.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+      function closeDialog() {
+        dialog.hidden = true;
+        document.body.style.overflow = '';
+      }
+      dialog.addEventListener('click', (e) => {
+        if (e.target && e.target.matches('[data-close], [data-close] *')) closeDialog();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !dialog.hidden) closeDialog();
+      });
+
+      // Chromium: capture the native prompt
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        showButton();
+      });
+
+      window.addEventListener('appinstalled', () => {
+        deferredPrompt = null;
+        hideButton();
+      });
+
+      btn.addEventListener('click', async () => {
+        if (deferredPrompt) {
+          try {
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') hideButton();
+          } catch (err) { /* user dismissed */ }
+          deferredPrompt = null;
+          return;
+        }
+        // No native prompt available – show instructions
+        openDialog();
+      });
+
+      // On iOS / mobile Safari, beforeinstallprompt never fires.
+      // Show the button anyway so users can open the instructions.
+      if (isIOS || (!isAndroid && /Mobi|Tablet/i.test(ua))) {
+        showButton();
+      }
+    })();
+  </script>
+
   <script src="js/app.js"></script>
 </body>
 </html>
