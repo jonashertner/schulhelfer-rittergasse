@@ -3,7 +3,7 @@
  * Provides offline support and caching for better performance
  */
 
-const CACHE_NAME = 'schulhelfer-v7';
+const CACHE_NAME = 'schulhelfer-v8';
 
 // Resolve asset URLs relative to the service worker's own location so
 // they work regardless of deployment subpath (e.g. GitHub Pages project
