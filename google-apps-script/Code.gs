@@ -31,12 +31,22 @@ var MAX_EVENT_NAME_LEN = 120;
 
 var ADMIN_EMAIL = ''; // Set this to receive notifications (optional)
 
-// Secret key that unlocks admin-only endpoints (getHelferList).
-// Set this to a long random string to enable the "Helferliste als Word
-// herunterladen" button on the public site for organisers.
-// Share the URL in the form   https://…/?admin=YOUR_KEY   once per device.
-// Leave empty to disable admin access entirely.
-var ADMIN_KEY = 'ritter';
+// Admin key for the Helferliste download. Reads from Script Properties
+// first (recommended), falls back to this constant. To set up:
+//   1. In the Apps Script editor → Project Settings → Script Properties
+//   2. Add property: Key = ADMIN_KEY, Value = <long random string>
+//   3. Redeploy. The constant below can then stay empty.
+var ADMIN_KEY_FALLBACK = '';
+
+function getAdminKeyValue() {
+  try {
+    var stored = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
+    if (stored) return stored;
+  } catch (e) {
+    Logger.log('Could not read Script Properties: ' + e);
+  }
+  return ADMIN_KEY_FALLBACK;
+}
 
 // === Utility Functions ===
 
@@ -45,11 +55,7 @@ var ADMIN_KEY = 'ritter';
  */
 function sanitizeInput(str) {
   if (!str) return '';
-  return String(str)
-    .replace(/[<>]/g, '')
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+=/gi, '')
-    .trim();
+  return String(str).trim();
 }
 
 /**
@@ -234,10 +240,13 @@ function logAudit(action, data, success, error) {
       Session.getActiveUser().getEmail() || 'Web-App'
     ]);
     
-    // Keep only last 1000 entries
-    var lastRow = logSheet.getLastRow();
-    if (lastRow > 1001) {
-      logSheet.deleteRows(2, lastRow - 1001);
+    // Keep only last 1000 entries. Only check every ~50 writes to avoid
+    // the overhead of counting rows on every single audit call.
+    if (Math.random() < 0.02) {
+      var lastRow = logSheet.getLastRow();
+      if (lastRow > 1001) {
+        logSheet.deleteRows(2, lastRow - 1001);
+      }
     }
   } catch (e) {
     // Silent fail for logging
@@ -278,7 +287,8 @@ function doGet(e) {
       logAudit('GET_RATE_LIMIT', { action: action }, false, 'Rate limit exceeded');
       output = JSON.stringify({
         success: false,
-        error: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.'
+        error: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.',
+        errorCode: 'RATE_LIMIT'
       });
       return ContentService
         .createTextOutput(output)
@@ -341,12 +351,20 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     identifier = 'POST:' + (data.email || 'anonymous').toLowerCase();
 
+    // Honeypot: if the hidden field is filled, silently accept to fool bots
+    if (data.website) {
+      logAudit('HONEYPOT_TRIGGERED', { email: data.email }, false, 'Bot detected');
+      output = JSON.stringify({ success: true, message: 'Vielen Dank für Ihre Anmeldung!' });
+      return ContentService.createTextOutput(output).setMimeType(ContentService.MimeType.JSON);
+    }
+
     // Rate limiting
     if (!checkRateLimit(identifier, RATE_LIMIT_CAPS.POST)) {
       logAudit('POST_RATE_LIMIT', { anlassId: data.anlassId }, false, 'Rate limit exceeded');
-      output = JSON.stringify({ 
-        success: false, 
-        message: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.' 
+      output = JSON.stringify({
+        success: false,
+        message: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.',
+        errorCode: 'RATE_LIMIT'
       });
       return ContentService
         .createTextOutput(output)
@@ -438,10 +456,12 @@ function getAktiveAnlaesse() {
 // the ADMIN_KEY config value, compared with constant-time equality.
 // Returns event metadata + every registration row for that event.
 function getHelferList(eventId, providedKey) {
-  if (!ADMIN_KEY) {
-    return { success: false, error: 'Admin-Zugriff ist nicht konfiguriert. Bitte ADMIN_KEY in Code.gs setzen.' };
+  var adminKey = getAdminKeyValue();
+  if (!adminKey) {
+    return { success: false, error: 'Admin-Zugriff ist nicht konfiguriert. Bitte ADMIN_KEY in den Script Properties setzen.' };
   }
-  if (!providedKey || !secureEquals(String(providedKey), String(ADMIN_KEY))) {
+  if (!providedKey || !secureEquals(String(providedKey), String(adminKey))) {
+    logAudit('ADMIN_AUTH_FAIL', { eventId: eventId }, false, 'Invalid admin key');
     return { success: false, error: 'Keine Berechtigung.' };
   }
   if (!eventId) {
@@ -622,7 +642,11 @@ function registriereHelfer(data) {
 
   } catch (e) {
     Logger.log('registriereHelfer error: ' + e);
-    return { success: false, message: 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.' };
+    var msg = 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.';
+    if (String(e).indexOf('lock') !== -1 || String(e).indexOf('Lock') !== -1) {
+      msg = 'Der Server ist gerade stark ausgelastet. Bitte versuchen Sie es in wenigen Sekunden erneut.';
+    }
+    return { success: false, message: msg };
   } finally {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
@@ -826,6 +850,89 @@ function exportDataAsCSV() {
   }
 }
 
+/**
+ * Delete registrations and events that are older than `months` months.
+ * Respects Swiss DSG purpose limitation: personal data should not be
+ * retained beyond the purpose (= the event).
+ */
+function alteAnlaesseBereinigen() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    '🗑️ Alte Anlässe bereinigen',
+    'Wie viele Monate nach dem Anlass sollen Daten aufbewahrt werden?\n' +
+    '(z.B. 3 = Anlässe, die vor mehr als 3 Monaten stattfanden, werden gelöscht)',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  var months = parseInt(resp.getResponseText(), 10);
+  if (isNaN(months) || months < 0) {
+    ui.alert('Ungültige Eingabe.');
+    return;
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!anlassSheet || !helferSheet) {
+    ui.alert('Tabellenblätter nicht gefunden.');
+    return;
+  }
+
+  var cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - months);
+  cutoff.setHours(0, 0, 0, 0);
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    var anlassData = anlassSheet.getDataRange().getValues();
+    var expiredIds = {};
+    var anlassRowsToDelete = [];
+
+    for (var i = anlassData.length - 1; i >= 1; i--) {
+      var datum = parseDate(anlassData[i][2]);
+      if (datum && datum < cutoff) {
+        expiredIds[String(anlassData[i][0])] = true;
+        anlassRowsToDelete.push(i + 1);
+      }
+    }
+
+    var helferData = helferSheet.getDataRange().getValues();
+    var helferRowsToDelete = [];
+    for (var j = helferData.length - 1; j >= 1; j--) {
+      if (expiredIds[String(helferData[j][1] || '')]) {
+        helferRowsToDelete.push(j + 1);
+      }
+    }
+
+    // Delete bottom-up so row indices stay valid
+    for (var k = 0; k < helferRowsToDelete.length; k++) {
+      helferSheet.deleteRow(helferRowsToDelete[k]);
+    }
+    for (var l = 0; l < anlassRowsToDelete.length; l++) {
+      anlassSheet.deleteRow(anlassRowsToDelete[l]);
+    }
+
+    logAudit('BEREINIGUNG', {
+      months: months,
+      anlaesse: anlassRowsToDelete.length,
+      anmeldungen: helferRowsToDelete.length
+    }, true, null);
+
+    ui.alert(
+      '✅ Bereinigung abgeschlossen.\n\n' +
+      anlassRowsToDelete.length + ' Anlass/Anlässe und ' +
+      helferRowsToDelete.length + ' Anmeldung(en) gelöscht.\n' +
+      '(Stichtag: älter als ' + months + ' Monate)'
+    );
+  } catch (e) {
+    logAudit('BEREINIGUNG', {}, false, String(e));
+    ui.alert('Fehler: ' + e);
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('🏰 Schulhelfer')
     .addItem('Erstes Setup', 'erstesSetup')
@@ -835,6 +942,7 @@ function onOpen() {
     .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
     .addItem('Daten exportieren', 'exportDataAsCSV')
     .addSeparator()
+    .addItem('Alte Anlässe bereinigen', 'alteAnlaesseBereinigen')
     .addItem('Admin-Status prüfen', 'adminKeyStatus')
     .addItem('Audit-Log anzeigen', 'zeigeAuditLog')
     .addToUi();
@@ -894,20 +1002,27 @@ function zaehlerNeuBerechnen() {
  */
 function adminKeyStatus() {
   var ui = SpreadsheetApp.getUi();
-  var key = ADMIN_KEY || '';
+  var key = getAdminKeyValue();
+  var source = '';
+  try {
+    source = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY') ? 'Script Properties' : 'Code-Konstante';
+  } catch (e) { source = 'unbekannt'; }
+
   if (!key) {
     ui.alert(
       '🔑 Admin-Status',
       'Es ist KEIN Admin-Schlüssel gesetzt.\n\n' +
-      'Der "Helferliste (Word)"-Download ist damit deaktiviert. ' +
-      'Setzen Sie ADMIN_KEY in Code.gs auf einen langen, zufälligen Wert ' +
-      'und stellen Sie die Web-App neu bereit, um Admin-Funktionen zu aktivieren.',
+      'Der "Helferliste (Word)"-Download ist damit deaktiviert.\n\n' +
+      'Einrichten:\n' +
+      '1. Projekt-Einstellungen → Script Properties\n' +
+      '2. Eigenschaft: ADMIN_KEY = <langer zufälliger Wert>\n' +
+      '3. Web-App neu bereitstellen.',
       ui.ButtonSet.OK
     );
     return;
   }
-  var msg = 'Ein Admin-Schlüssel ist gesetzt (Länge: ' + key.length + ' Zeichen).';
-  if (key.length < 12) {
+  var msg = 'Ein Admin-Schlüssel ist gesetzt (Länge: ' + key.length + ' Zeichen, Quelle: ' + source + ').';
+  if (key.length < 16) {
     msg += '\n\n⚠️ HINWEIS: Der Schlüssel ist kurz. Für produktiven Einsatz ' +
            'sollten Sie mindestens 16 zufällige Zeichen verwenden.';
   }

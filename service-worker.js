@@ -3,7 +3,7 @@
  * Provides offline support and caching for better performance
  */
 
-const CACHE_NAME = 'schulhelfer-v10';
+const CACHE_NAME = 'schulhelfer-v11';
 
 // Resolve asset URLs relative to the service worker's own location so
 // they work regardless of deployment subpath (e.g. GitHub Pages project
@@ -14,12 +14,15 @@ const STATIC_ASSETS = [
   './css/styles.css',
   './js/app.js',
   './manifest.webmanifest',
-  './icons/icon.svg'
+  './icons/icon.svg',
+  './icons/icon-maskable.svg'
 ].map((p) => new URL(p, self.location).href);
 
 const STATIC_ASSET_PATHNAMES = STATIC_ASSETS.map((u) => new URL(u).pathname);
 
-// Install event - cache static assets
+// Install event - cache static assets. Does NOT call skipWaiting() so
+// the new version waits until the user triggers an update (via the
+// controllerchange listener in the main thread).
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -27,7 +30,6 @@ self.addEventListener('install', (event) => {
         console.log('[SW] Caching static assets');
         return cache.addAll(STATIC_ASSETS);
       })
-      .then(() => self.skipWaiting())
   );
 });
 

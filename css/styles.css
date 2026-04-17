@@ -1428,43 +1428,12 @@ a {
   flex-shrink: 0;
 }
 
-/* ===== Install-to-Home-Screen Dialog ===== */
-
-.install-dialog {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-}
-
-.install-dialog[hidden] { display: none; }
-
-.install-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-}
+/* ===== Install-to-Home-Screen Dialog (native <dialog>) ===== */
 
 .install-card {
   position: relative;
-  max-width: 440px;
-  width: 100%;
-  background: var(--white, #fff);
-  color: var(--gray-900, #1a1a1a);
-  border-radius: var(--radius-lg, 16px);
   padding: var(--space-6) var(--space-5) var(--space-5);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  animation: install-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
   text-align: center;
-}
-
-[data-theme="dark"] .install-card {
-  background: var(--gray-100, #222);
-  color: var(--gray-900, #f0f0f0);
 }
 
 @keyframes install-pop {
@@ -1753,18 +1722,137 @@ a {
 }
 
 /* Lift the floating theme toggle when the banner is visible so they
-   don't overlap on small screens */
+   don't overlap on small screens. Uses sibling selector for Firefox
+   compatibility (no :has() needed). */
 @media (max-width: 768px) {
-  .install-banner.is-visible ~ .theme-toggle,
-  body:has(.install-banner.is-visible) .theme-toggle {
+  .install-banner.is-visible ~ .theme-toggle {
     transform: translateY(-96px);
   }
 }
 
+/* === Privacy dialog === */
+.privacy-dialog {
+  border: none;
+  border-radius: var(--radius-xl, 18px);
+  padding: 0;
+  max-width: 520px;
+  width: calc(100% - 2rem);
+  background: var(--white, #fff);
+  box-shadow: var(--shadow-lg, 0 8px 30px rgba(0,0,0,0.15));
+}
+
+.privacy-dialog::backdrop {
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="dark"] .privacy-dialog {
+  background: var(--gray-800, #2a2927);
+  color: var(--gray-200, #e8e6e3);
+}
+
+.privacy-card {
+  padding: var(--space-8, 32px);
+  position: relative;
+}
+
+.privacy-body {
+  margin: var(--space-4, 16px) 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--gray-700, #3d3b38);
+}
+
+[data-theme="dark"] .privacy-body { color: var(--gray-300, #d4d2cf); }
+
+.privacy-body p {
+  margin: 0 0 var(--space-3, 12px);
+}
+
+.privacy-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--gray-400, #a8a5a0);
+  text-underline-offset: 2px;
+}
+
+.privacy-link:hover { text-decoration-color: currentColor; }
+
+/* === Native <dialog> for install === */
+.install-dialog {
+  border: none;
+  border-radius: var(--radius-xl, 18px);
+  padding: 0;
+  max-width: 420px;
+  width: calc(100% - 2rem);
+  background: var(--white, #fff);
+  box-shadow: var(--shadow-lg, 0 8px 30px rgba(0,0,0,0.15));
+}
+
+.install-dialog::backdrop {
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="dark"] .install-dialog {
+  background: var(--gray-800, #2a2927);
+}
+
+/* === Service Worker update toast === */
+.sw-update-toast {
+  position: fixed;
+  bottom: -80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  background: var(--gray-800, #2a2927);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius, 10px);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  transition: bottom 0.35s var(--ease);
+  white-space: nowrap;
+}
+
+.sw-update-toast.is-visible { bottom: 1.5rem; }
+
+.sw-update-toast button {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sw-update-toast button:hover { background: rgba(255,255,255,0.1); }
+
+.sw-toast-close {
+  border: none !important;
+  padding: 0.2rem 0.4rem !important;
+  font-size: 1rem !important;
+  opacity: 0.7;
+}
+
+.sw-toast-close:hover { opacity: 1; }
+
 /* Print */
 @media print {
   .header { padding: 1rem 0; border-bottom: 1px solid #ddd; }
-  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .download-btn, .calendar-download-btn, .theme-toggle, .footer-install, .install-dialog, .install-banner { display: none; }
+  .school-badge, .back-btn, .skip-link, .footer, .event-cta, .download-btn, .calendar-download-btn, .theme-toggle, .footer-install, .install-dialog, .install-banner, .sw-update-toast { display: none; }
   .event-card { border: 1px solid #ddd; break-inside: avoid; }
   .btn { display: none; }
 }

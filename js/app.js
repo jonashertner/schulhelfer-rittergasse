@@ -9,65 +9,6 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
-  // === Performance Metrics ===
-  const Metrics = {
-    loadEventsTiming: [],
-    registrationTiming: [],
-    maxSamples: 10,
-
-    recordLoadEvents(durationMs) {
-      this.loadEventsTiming.push(durationMs);
-      if (this.loadEventsTiming.length > this.maxSamples) {
-        this.loadEventsTiming.shift();
-      }
-      this.log('loadEvents', durationMs);
-    },
-
-    recordRegistration(durationMs) {
-      this.registrationTiming.push(durationMs);
-      if (this.registrationTiming.length > this.maxSamples) {
-        this.registrationTiming.shift();
-      }
-      this.log('registration', durationMs);
-    },
-
-    getAverageLoadTime() {
-      if (this.loadEventsTiming.length === 0) return 0;
-      const sum = this.loadEventsTiming.reduce((a, b) => a + b, 0);
-      return Math.round(sum / this.loadEventsTiming.length);
-    },
-
-    getAverageRegistrationTime() {
-      if (this.registrationTiming.length === 0) return 0;
-      const sum = this.registrationTiming.reduce((a, b) => a + b, 0);
-      return Math.round(sum / this.registrationTiming.length);
-    },
-
-    log(operation, durationMs) {
-      if (typeof console !== 'undefined' && console.debug) {
-        console.debug(`[Metrics] ${operation}: ${durationMs}ms`);
-      }
-    },
-
-    getSummary() {
-      return {
-        loadEvents: {
-          average: this.getAverageLoadTime(),
-          samples: this.loadEventsTiming.length,
-          last: this.loadEventsTiming[this.loadEventsTiming.length - 1] || 0
-        },
-        registration: {
-          average: this.getAverageRegistrationTime(),
-          samples: this.registrationTiming.length,
-          last: this.registrationTiming[this.registrationTiming.length - 1] || 0
-        }
-      };
-    }
-  };
-
-  // Expose metrics for debugging (accessible via window.SchulhelferMetrics)
-  window.SchulhelferMetrics = Metrics;
-
   // === Centralized Configuration ===
   const AppConfig = {
     // Retry settings
@@ -124,12 +65,7 @@
     },
 
     setEvents(events) {
-      this.events = (events || []).slice().sort((a, b) => {
-        // Sort by datumSort if available (from backend), otherwise parse datum string
-        const dateA = a.datumSort || parseEventDateForSort(a.datum);
-        const dateB = b.datumSort || parseEventDateForSort(b.datum);
-        return dateA - dateB;
-      });
+      this.events = (events || []).slice();
     },
 
     setSelectedEvent(event) {
@@ -193,28 +129,18 @@
     return !!getAdminKey();
   }
 
-  // Generate unique identifier for rate limiting (more robust than simple localStorage)
   function getIdentifier() {
     let id = localStorage.getItem('userIdentifier');
     if (!id) {
-      // Use crypto API for secure random if available, fallback to Math.random
-      let randomPart;
-      if (window.crypto && window.crypto.getRandomValues) {
-        const array = new Uint32Array(2);
-        window.crypto.getRandomValues(array);
-        randomPart = array[0].toString(36) + array[1].toString(36);
+      if (window.crypto && typeof crypto.randomUUID === 'function') {
+        id = crypto.randomUUID();
+      } else if (window.crypto && crypto.getRandomValues) {
+        const a = new Uint32Array(4);
+        crypto.getRandomValues(a);
+        id = Array.from(a, (n) => n.toString(16).padStart(8, '0')).join('-');
       } else {
-        randomPart = Math.random().toString(36).substr(2, 9) + Math.random().toString(36).substr(2, 9);
+        id = 'u-' + Math.random().toString(36).substr(2) + Math.random().toString(36).substr(2);
       }
-
-      // Add browser fingerprint components for additional uniqueness
-      const fingerprint = [
-        navigator.language || '',
-        screen.width + 'x' + screen.height,
-        new Date().getTimezoneOffset()
-      ].join('|');
-
-      id = 'user_' + Date.now() + '_' + randomPart + '_' + btoa(fingerprint).substr(0, 8);
       localStorage.setItem('userIdentifier', id);
     }
     return id;
@@ -233,10 +159,32 @@
     setupKeyboardNavigation();
     setupFormPersistence();
     setupSpreadsheetLink();
-    // loadEvents must finish before restoreFormData so that the saved
-    // event selection can be matched against the loaded event list.
+    setupServiceWorkerUpdate();
     await loadEvents();
     restoreFormData();
+  }
+
+  function setupServiceWorkerUpdate() {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      showUpdateToast();
+    });
+  }
+
+  function showUpdateToast() {
+    let toast = document.getElementById('sw-update-toast');
+    if (toast) return;
+    toast = document.createElement('div');
+    toast.id = 'sw-update-toast';
+    toast.className = 'sw-update-toast';
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML =
+      '<span>Neue Version verfügbar</span>' +
+      '<button type="button" onclick="location.reload()">Aktualisieren</button>' +
+      '<button type="button" class="sw-toast-close" aria-label="Schliessen" ' +
+        'onclick="this.parentElement.remove()">✕</button>';
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('is-visible'));
   }
   
   // Show a small badge + logout link when the device is in admin mode,
@@ -279,7 +227,6 @@
   async function loadEvents(retryAttempt = 0) {
     showLoading(true);
     hideError();
-    const startTime = performance.now();
 
     try {
       // Build URL with cache-busting and identifier
@@ -312,9 +259,6 @@
       renderEvents();
       AppState.retryCount = 0; // Reset on success
       announce(`${AppState.events.length} ${AppState.events.length === 1 ? 'Anlass' : 'Anlässe'} gefunden`);
-
-      // Record successful load timing
-      Metrics.recordLoadEvents(Math.round(performance.now() - startTime));
 
     } catch (error) {
       console.error('Fehler beim Laden:', error);
@@ -368,9 +312,7 @@
   }
 
   function createEventCard(event, index) {
-    // "voll" is authoritative when present (server sends it); fall back
-    // to the count for older API responses.
-    const voll = event.voll === true || event.freiePlaetze <= 0;
+    const voll = !!event.voll;
     const badgeClass = voll ? 'event-badge--full' :
                        event.freiePlaetze <= 1 ? 'event-badge--last' :
                        event.freiePlaetze <= 3 ? 'event-badge--limited' : 'event-badge--available';
@@ -483,12 +425,6 @@
            date.getDate() === day;
   }
 
-  // Helper for sorting: returns timestamp or Infinity for invalid dates
-  function parseEventDateForSort(dateStr) {
-    const date = parseEventDate(dateStr);
-    return date ? date.getTime() : Infinity;
-  }
-
   // Parse German date string to Date object
   // Supports formats: "Montag, 15. Juli 2025", "15. Juli 2025", "15.7.2025"
   function parseEventDate(dateStr) {
@@ -592,8 +528,21 @@
   }
 
   // === Shared Calendar Utility ===
-  // Format date for iCal (YYYYMMDDTHHMMSSZ) - UTC format
+  const ICAL_TZID = 'Europe/Zurich';
+
+  // Format date for iCal as local time (YYYYMMDDTHHMMSS) – used with TZID
   function formatICalDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}${month}${day}T${hours}${minutes}${seconds}`;
+  }
+
+  // UTC timestamp for DTSTAMP (always UTC per RFC 5545)
+  function formatICalDateUTC(date) {
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
@@ -640,9 +589,8 @@
 
     const startStr = formatICalDate(start);
     const endStr = formatICalDate(end);
-    const nowStr = formatICalDate(new Date());
+    const nowStr = formatICalDateUTC(new Date());
 
-    // Build summary (include attendee name if provided)
     const summary = attendeeName
       ? `${eventName} - ${attendeeName}`
       : eventName;
@@ -653,11 +601,28 @@
       'PRODID:-//Schulhelfer Rittergasse//DE',
       'CALSCALE:GREGORIAN',
       'METHOD:PUBLISH',
+      'BEGIN:VTIMEZONE',
+      `TZID:${ICAL_TZID}`,
+      'BEGIN:STANDARD',
+      'DTSTART:19701025T030000',
+      'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU',
+      'TZOFFSETFROM:+0200',
+      'TZOFFSETTO:+0100',
+      'TZNAME:CET',
+      'END:STANDARD',
+      'BEGIN:DAYLIGHT',
+      'DTSTART:19700329T020000',
+      'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU',
+      'TZOFFSETFROM:+0100',
+      'TZOFFSETTO:+0200',
+      'TZNAME:CEST',
+      'END:DAYLIGHT',
+      'END:VTIMEZONE',
       'BEGIN:VEVENT',
       `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@schulhelfer-rittergasse`,
       `DTSTAMP:${nowStr}`,
-      `DTSTART:${startStr}`,
-      `DTEND:${endStr}`,
+      `DTSTART;TZID=${ICAL_TZID}:${startStr}`,
+      `DTEND;TZID=${ICAL_TZID}:${endStr}`,
       `SUMMARY:${escapeICal(summary)}`,
       `DESCRIPTION:${escapeICal(description || 'Schulhelfer Anlass - Primarstufe Rittergasse Basel')}`,
       `LOCATION:Primarstufe Rittergasse Basel`,
@@ -1291,20 +1256,11 @@
       const saved = localStorage.getItem('schulhelfer_form');
       if (saved) {
         const formData = JSON.parse(saved);
-        // Only restore if not expired
         if (Date.now() - formData.timestamp < AppConfig.FORM_EXPIRY) {
           if (formData.name) el.nameInput.value = formData.name;
           if (formData.email) el.emailInput.value = formData.email;
           if (formData.phone) el.phoneInput.value = formData.phone;
-          if (formData.eventId) {
-            // Try to restore the selected event
-            const event = AppState.findEventById(formData.eventId);
-            if (event) {
-              selectEvent(event.id, event.name);
-            }
-          }
         } else {
-          // Clear old data
           localStorage.removeItem('schulhelfer_form');
         }
       }
@@ -1404,22 +1360,20 @@
       return;
     }
 
+    const honeypot = document.getElementById('website');
     const data = {
       anlassId: el.eventIdInput.value,
       name: el.nameInput.value.trim(),
       email: el.emailInput.value.trim(),
       telefon: el.phoneInput.value.trim(),
+      website: honeypot ? honeypot.value : '',
       identifier: getIdentifier()
     };
 
     setSubmitLoading(true);
-    const startTime = performance.now();
 
     try {
       const result = await submitWithRetry(data, 0);
-
-      // Record registration timing
-      Metrics.recordRegistration(Math.round(performance.now() - startTime));
 
       if (result.success) {
         // Store registration data for calendar download
@@ -1471,9 +1425,9 @@
 
       const result = await response.json();
 
-      if (!result.success && retryAttempt < AppConfig.MAX_RETRIES && (
-        result.message && result.message.includes('Rate limit')
-      )) {
+      if (!result.success && retryAttempt < AppConfig.MAX_RETRIES &&
+        result.errorCode === 'RATE_LIMIT'
+      ) {
         // Retry on rate limit after delay
         retryAttempt++;
         await new Promise(resolve => setTimeout(resolve, AppConfig.RETRY_DELAY * retryAttempt * 2));
@@ -1565,6 +1519,8 @@
     
     el.successMessage.hidden = false;
     el.successMessage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    clearTimeout(showSuccess._timer);
+    showSuccess._timer = setTimeout(hideSuccess, 10000);
   }
   
   // Download calendar for registered event
