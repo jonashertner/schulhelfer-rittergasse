@@ -24,6 +24,7 @@ Ein barrierefreies, mobil-optimiertes Tool zur Rekrutierung von Eltern-Helfern f
 - **Kalender-Download** – iCal (.ics) Export für jeden Anlass
 - **Datenschutz** – DSG-konforme Datenschutzerklärung integriert
 - **Datenbereinigung** – Funktion zum Löschen alter Anlässe und Anmeldungen
+- **Robustes Sheet-Schema** – Validierung, COUNTIFS-Formeln und Sichtbarkeits-Spalte; via Menü „Setup verstärken“ idempotent angewendet
 
 ---
 
