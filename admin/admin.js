@@ -113,7 +113,7 @@
       showView('dashboard');
       renderEvents();
     } else {
-      show('#login-error', (result && result.error) || 'Anmeldung fehlgeschlagen.');
+      show('#login-error', pickError(result, 'Anmeldung fehlgeschlagen.'));
     }
   }
 
@@ -137,7 +137,7 @@
     showLoading(false);
 
     if (!result || !result.success) {
-      const msg = (result && result.error) || 'Daten konnten nicht geladen werden.';
+      const msg = pickError(result, 'Daten konnten nicht geladen werden.');
       if (result && result.error === 'Keine Berechtigung.') return false;
       showBanner('error-banner', msg);
       return true;
@@ -341,8 +341,7 @@
     setBusy('#event-save-btn', false);
 
     if (!result || !result.success) {
-      const msg = (result && (result.error || result.message)) || 'Speichern fehlgeschlagen.';
-      show('#event-form-error', msg);
+      show('#event-form-error', pickError(result, 'Speichern fehlgeschlagen.'));
       return;
     }
 
@@ -375,8 +374,7 @@
         if (event.angemeldete > 0) maybeOfferEmailDraft(event);
         await refreshEvents();
       } else {
-        const msg = (result && (result.error || result.message)) || 'Absage fehlgeschlagen.';
-        showBanner('error-banner', msg);
+        showBanner('error-banner', pickError(result, 'Absage fehlgeschlagen.'));
         closeModal('confirm-modal');
       }
     });
@@ -395,21 +393,45 @@
   async function callAdmin(payload, key) {
     if (!key) return { success: false, error: 'Keine Berechtigung.' };
     const body = Object.assign({ adminKey: key }, payload);
+    let res;
     try {
-      const res = await fetch(CONFIG.API_URL, {
+      res = await fetch(CONFIG.API_URL, {
         method: 'POST',
         redirect: 'follow',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(body)
       });
-      if (!res.ok) {
-        return { success: false, error: 'Server-Fehler ' + res.status };
-      }
-      return await res.json();
     } catch (err) {
-      console.error('admin call failed', err);
+      console.error('admin fetch failed', err);
       return { success: false, error: 'Netzwerkfehler. Bitte erneut versuchen.' };
     }
+    if (!res.ok) {
+      return { success: false, error: 'Server-Fehler ' + res.status };
+    }
+    // Distinguish JSON-parse failure (server returned HTML, e.g. an
+    // out-of-date Apps Script deployment that doesn't recognise our
+    // admin actions) from genuine `{success: false, error}` payloads.
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      console.error('non-JSON admin response:', text.slice(0, 300));
+      return {
+        success: false,
+        error: 'Apps Script antwortet mit HTML statt JSON. Bitte das Script neu bereitstellen ' +
+               '(Editor → Bereitstellung verwalten → Version: Neue Version).'
+      };
+    }
+  }
+
+  // Surface whichever message field the backend filled in. Older
+  // doPost paths return {success:false, message:…} (parents-form
+  // shape); admin paths return {success:false, error:…}. Showing
+  // either keeps the diagnostic readable when the deployment is
+  // mid-upgrade.
+  function pickError(result, fallback) {
+    if (!result) return fallback;
+    return result.error || result.message || fallback;
   }
 
   // ============================================================
@@ -487,7 +509,7 @@
     const key = localStorage.getItem(STORAGE_KEY);
     const result = await callAdmin({ action: 'getRegistrations', eventId: event.id }, key);
     if (!result || !result.success) {
-      show('#helpers-error', (result && result.error) || 'Helferdaten konnten nicht geladen werden.');
+      show('#helpers-error', pickError(result, 'Helferdaten konnten nicht geladen werden.'));
       return;
     }
     State.helpersList = result.registrations || [];
@@ -581,7 +603,7 @@
       }, key);
       save.disabled = false;
       if (!result || !result.success) {
-        show('#helpers-error', (result && result.error) || 'Notiz konnte nicht gespeichert werden.');
+        show('#helpers-error', pickError(result, 'Notiz konnte nicht gespeichert werden.'));
         return;
       }
       h.notizen = input.value;
@@ -604,7 +626,7 @@
     }, key);
     selectEl.disabled = false;
     if (!result || !result.success) {
-      show('#helpers-error', (result && result.error) || 'Status konnte nicht geändert werden.');
+      show('#helpers-error', pickError(result, 'Status konnte nicht geändert werden.'));
       selectEl.value = h.status;
       return;
     }
@@ -661,7 +683,7 @@
     setBusy('#manual-save-btn', false);
 
     if (!result || !result.success) {
-      show('#manual-error', (result && (result.error || result.message)) || 'Eintrag fehlgeschlagen.');
+      show('#manual-error', pickError(result, 'Eintrag fehlgeschlagen.'));
       return;
     }
     closeModal('manual-modal');
@@ -691,7 +713,7 @@
     const result = await callAdmin({ action: 'availableSchuljahre' }, key);
     select.replaceChildren();
     if (!result || !result.success) {
-      show('#archive-error', (result && result.error) || 'Schuljahre konnten nicht geladen werden.');
+      show('#archive-error', pickError(result, 'Schuljahre konnten nicht geladen werden.'));
       return;
     }
     if (!result.years || result.years.length === 0) {
@@ -722,7 +744,7 @@
     const result = await callAdmin({ action: 'archiveSchuljahr', jahr: jahr }, key);
     setBusy('#archive-go-btn', false);
     if (!result || !result.success) {
-      show('#archive-error', (result && (result.error || result.message)) || 'Archivierung fehlgeschlagen.');
+      show('#archive-error', pickError(result, 'Archivierung fehlgeschlagen.'));
       return;
     }
     closeModal('archive-modal');
@@ -743,7 +765,7 @@
     const target = $('#integrity-result');
     if (!result || !result.success) {
       const div = el('div', 'integrity-line is-warn');
-      div.textContent = (result && result.error) || 'Prüfung fehlgeschlagen.';
+      div.textContent = pickError(result, 'Prüfung fehlgeschlagen.');
       target.appendChild(div);
       return;
     }
