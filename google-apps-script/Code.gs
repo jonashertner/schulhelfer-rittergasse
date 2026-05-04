@@ -346,9 +346,21 @@ function doGet(e) {
 function doPost(e) {
   var output;
   var identifier = 'anonymous';
-  
+
   try {
     var data = JSON.parse(e.postData.contents);
+    var action = String(data.action || 'register');
+
+    // Admin actions are dispatched separately. They use the admin
+    // bucket for rate limiting and require ADMIN_KEY auth (sent in the
+    // POST body, never the URL).
+    if (action !== 'register') {
+      output = JSON.stringify(handleAdminPost(action, data));
+      return ContentService
+        .createTextOutput(output)
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     identifier = 'POST:' + (data.email || 'anonymous').toLowerCase();
 
     // Honeypot: if the hidden field is filled, silently accept to fool bots
@@ -370,22 +382,252 @@ function doPost(e) {
         .createTextOutput(output)
         .setMimeType(ContentService.MimeType.JSON);
     }
-    
+
     var result = registriereHelfer(data);
     logAudit('REGISTRATION', { anlassId: data.anlassId, email: data.email }, result.success, result.message);
     output = JSON.stringify(result);
   } catch (error) {
     var errorMsg = 'Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es später erneut.';
     logAudit('POST_ERROR', {}, false, error.toString());
-    output = JSON.stringify({ 
-      success: false, 
-      message: errorMsg 
+    output = JSON.stringify({
+      success: false,
+      message: errorMsg
     });
   }
-  
+
   return ContentService
     .createTextOutput(output)
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// =============================================================
+// === Admin POST dispatch (PR 3) ==============================
+// =============================================================
+//
+// All admin actions live behind a single ADMIN_KEY check. Failed auth
+// attempts share the global brute-force bucket (ADMIN_BRUTEFORCE_CAP),
+// which is independent of any per-identifier rate limit. Authenticated
+// requests share a 'admin-action' bucket of 60/min — generous for a
+// real teacher workflow, tight enough to stop runaway scripts.
+//
+// Every action returns { success, ... } where unsuccessful results
+// carry a human-readable `error` (admin UI surfaces this directly).
+
+function handleAdminPost(action, data) {
+  if (!isAdminAuthorized(data && data.adminKey)) {
+    if (!checkRateLimit('admin-fail', ADMIN_BRUTEFORCE_CAP)) {
+      logAudit('ADMIN_AUTH_BRUTEFORCE', { action: action }, false, 'Lockout');
+      return { success: false, error: 'Zu viele Fehlversuche. Bitte später erneut.' };
+    }
+    logAudit('ADMIN_AUTH_FAIL', { action: action }, false, 'Invalid admin key');
+    return { success: false, error: 'Keine Berechtigung.' };
+  }
+
+  if (!checkRateLimit('admin-action', 60)) {
+    return { success: false, error: 'Zu viele Aktionen in kurzer Zeit. Bitte kurz warten.' };
+  }
+
+  try {
+    switch (action) {
+      case 'getAllEvents': return getAllEventsAdmin();
+      case 'addEvent':     return addEventAdmin(data);
+      case 'updateEvent':  return updateEventAdmin(data);
+      case 'cancelEvent':  return cancelEventAdmin(data);
+      default:
+        return { success: false, error: 'Unbekannte Aktion: ' + action };
+    }
+  } catch (e) {
+    logAudit('ADMIN_ACTION_ERROR', { action: action }, false, String(e));
+    return { success: false, error: 'Serverfehler: ' + e };
+  }
+}
+
+function isAdminAuthorized(providedKey) {
+  var stored = getAdminKeyValue();
+  if (!stored) return false;
+  if (!providedKey) return false;
+  return secureEquals(String(providedKey), String(stored));
+}
+
+/**
+ * Return every live event (all statuses, including past dates) so the
+ * admin UI can group them. Archived rows are intentionally excluded —
+ * they live in their own sheets and the admin dashboard treats them
+ * as off-stage history.
+ */
+function getAllEventsAdmin() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
+  if (!sheet) return { success: true, events: [] };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { success: true, events: [] };
+
+  var values = sheet.getRange(2, 1, lastRow - 1, ANLASS_HEADERS.length).getValues();
+  var events = [];
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    if (!row[0]) continue;
+    var datum = parseDate(row[2]);
+    events.push({
+      id: String(row[0]),
+      name: String(row[1] || ''),
+      datum: datum ? datum.toISOString() : '',
+      datumDisplay: datum ? formatDatum(datum) : '',
+      zeit: String(row[3] || ''),
+      maxHelfer: parseInt(row[4]) || 0,
+      angemeldete: parseInt(row[5]) || 0,
+      beschreibung: String(row[6] || ''),
+      status: String(row[7] || 'aktiv').toLowerCase() || 'aktiv',
+      schuljahr: String(row[8] || ''),
+      sichtbar: String(row[9] || ''),
+      notizen: String(row[10] || '')
+    });
+  }
+  return { success: true, events: events };
+}
+
+function addEventAdmin(data) {
+  var validation = validateEventInput(data);
+  if (!validation.ok) return { success: false, error: validation.error };
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
+  if (!sheet) return { success: false, error: 'Tabellenblatt "Anlässe" fehlt.' };
+
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) {
+      return { success: false, error: 'Server gerade ausgelastet. Bitte erneut versuchen.' };
+    }
+    var newId = nextAnlassId();
+    sheet.appendRow([
+      newId,
+      sheetSafe(validation.name),
+      validation.datum,
+      sheetSafe(validation.zeit),
+      validation.helfer,
+      0, // formula written below
+      sheetSafe(validation.beschreibung),
+      'aktiv',
+      schuljahrFor(validation.datum),
+      '',
+      ''
+    ]);
+    var newRow = sheet.getLastRow();
+    sheet.getRange(newRow, 6).setFormula(angemeldeteFormulaForRow(newRow));
+    sheet.getRange(newRow, 10).setFormula(sichtbarFormulaForRow(newRow));
+    logAudit('ADMIN_ADD_EVENT', { id: newId, name: validation.name }, true, null);
+    return { success: true, event: { id: String(newId), name: validation.name } };
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+function updateEventAdmin(data) {
+  var id = String(data && data.id || '').trim();
+  if (!id) return { success: false, error: 'Anlass-ID fehlt.' };
+
+  var validation = validateEventInput(data);
+  if (!validation.ok) return { success: false, error: validation.error };
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
+  if (!sheet) return { success: false, error: 'Tabellenblatt "Anlässe" fehlt.' };
+
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) {
+      return { success: false, error: 'Server gerade ausgelastet. Bitte erneut versuchen.' };
+    }
+    var rowIdx = findEventRow(sheet, id);
+    if (rowIdx === -1) return { success: false, error: 'Anlass nicht gefunden.' };
+
+    // Update in-place, preserving Status, Notizen, and the formulas in
+    // F (Angemeldete) and J (Sichtbar?). Schuljahr is recomputed because
+    // the date may have moved across the Aug-cutoff.
+    sheet.getRange(rowIdx, 2).setValue(sheetSafe(validation.name));
+    sheet.getRange(rowIdx, 3).setValue(validation.datum);
+    sheet.getRange(rowIdx, 4).setValue(sheetSafe(validation.zeit));
+    sheet.getRange(rowIdx, 5).setValue(validation.helfer);
+    sheet.getRange(rowIdx, 7).setValue(sheetSafe(validation.beschreibung));
+    sheet.getRange(rowIdx, 9).setValue(schuljahrFor(validation.datum));
+    // Re-assert the formulas in case the row was edited manually and
+    // those cells got clobbered with values.
+    sheet.getRange(rowIdx, 6).setFormula(angemeldeteFormulaForRow(rowIdx));
+    sheet.getRange(rowIdx, 10).setFormula(sichtbarFormulaForRow(rowIdx));
+
+    logAudit('ADMIN_UPDATE_EVENT', { id: id, name: validation.name }, true, null);
+    return { success: true, event: { id: id, name: validation.name } };
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+function cancelEventAdmin(data) {
+  var id = String(data && data.id || '').trim();
+  if (!id) return { success: false, error: 'Anlass-ID fehlt.' };
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
+  if (!sheet) return { success: false, error: 'Tabellenblatt "Anlässe" fehlt.' };
+
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) {
+      return { success: false, error: 'Server gerade ausgelastet. Bitte erneut versuchen.' };
+    }
+    var rowIdx = findEventRow(sheet, id);
+    if (rowIdx === -1) return { success: false, error: 'Anlass nicht gefunden.' };
+
+    sheet.getRange(rowIdx, 8).setValue('abgesagt');
+    logAudit('ADMIN_CANCEL_EVENT', { id: id }, true, null);
+    return { success: true };
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+function findEventRow(sheet, id) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return -1;
+  var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim() === id) return i + 2;
+  }
+  return -1;
+}
+
+/**
+ * Centralised input validation for addEvent/updateEvent. The same
+ * caps and rules as the in-Sheet dialog (anlassHinzufuegen) so the
+ * two paths can never disagree about what's acceptable.
+ */
+function validateEventInput(data) {
+  if (!data) return { ok: false, error: 'Keine Daten übermittelt.' };
+  var name = sanitizeInput(data.name || '');
+  var zeit = sanitizeInput(data.zeit || '');
+  var beschreibung = sanitizeInput(data.beschreibung || '');
+  var helfer = parseInt(data.helfer, 10);
+  if (!name) return { ok: false, error: 'Bitte einen Namen eingeben.' };
+  if (name.length > MAX_EVENT_NAME_LEN) {
+    return { ok: false, error: 'Der Anlass-Name ist zu lang (max. ' + MAX_EVENT_NAME_LEN + ' Zeichen).' };
+  }
+  if (beschreibung.length > MAX_DESC_LEN) {
+    return { ok: false, error: 'Die Beschreibung ist zu lang (max. ' + MAX_DESC_LEN + ' Zeichen).' };
+  }
+  if (!Number.isFinite(helfer) || helfer < 1) {
+    return { ok: false, error: 'Bitte mindestens 1 Helfer angeben.' };
+  }
+  var datum = parseDate(data.datum);
+  if (!datum) return { ok: false, error: 'Ungültiges Datum.' };
+  return {
+    ok: true,
+    name: name,
+    zeit: zeit,
+    beschreibung: beschreibung,
+    helfer: helfer,
+    datum: datum
+  };
 }
 
 // === Get Active Events ===
