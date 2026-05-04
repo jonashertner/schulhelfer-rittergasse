@@ -419,6 +419,12 @@ function getAktiveAnlaesse() {
     var aktuelleHelfer = parseInt(row[5]) || 0;
     var anlassId = String(row[0]);
 
+    // Status (column H, index 7) is part of the post-PR-1 schema. Treat
+    // a blank cell as "aktiv" for backward compatibility with sheets
+    // that haven't been migrated yet via setupVerstaerken().
+    var status = String(row[7] || 'aktiv').trim().toLowerCase();
+    if (status && status !== 'aktiv') continue;
+
     // Normalize dates for comparison
     var datumNormalized = new Date(datum);
     datumNormalized.setHours(0, 0, 0, 0);
@@ -630,15 +636,23 @@ function registriereHelfer(data) {
     // single quote so Sheets stores it as text. Without this, "+41 79
     // ..." phone numbers are silently parsed as unary-plus formulas
     // and either lose the leading "+" or become #ERROR!.
+    // Append registration. The Anlässe!F (Angemeldete) column is now a
+    // COUNTIFS formula maintained by Sheets, so we no longer write the
+    // count manually – that would clobber the formula. Capacity remains
+    // race-safe because LockService serialises registrations and the
+    // formula recomputes synchronously when the next request reads it.
+    // The trailing 'aktiv' goes into Anmeldungen!G (Status column added
+    // by setupVerstaerken). On unmigrated sheets it sits as data in an
+    // unlabelled column G; harmless and forward-compatible.
     helferSheet.appendRow([
       new Date(),
       sheetSafe(anlassId),
       sheetSafe(name),
       sheetSafe(email),
       sheetSafe(telefon),
-      sheetSafe(anlassName)
+      sheetSafe(anlassName),
+      'aktiv'
     ]);
-    anlassSheet.getRange(anlassRow, 6).setValue(aktuelleHelfer + 1);
 
   } catch (e) {
     Logger.log('registriereHelfer error: ' + e);
@@ -936,8 +950,9 @@ function alteAnlaesseBereinigen() {
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('🏰 Schulhelfer')
     .addItem('Erstes Setup', 'erstesSetup')
-    .addItem('Neuer Anlass hinzufügen', 'neuerAnlassDialog')
+    .addItem('Setup verstärken (Validierung & Formeln)', 'setupVerstaerken')
     .addSeparator()
+    .addItem('Neuer Anlass hinzufügen', 'neuerAnlassDialog')
     .addItem('Alle Anmeldungen anzeigen', 'zeigeAnmeldungen')
     .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
     .addItem('Daten exportieren', 'exportDataAsCSV')
@@ -1137,27 +1152,394 @@ function anlassHinzufuegen(data) {
   if (!sheet) throw new Error('Tabellenblatt "Anlässe" nicht gefunden.');
 
   // Lock guarantees two concurrent invocations can't compute the same
-  // maxId and collide on the ID column.
+  // newId and collide on the ID column. We also scan archived
+  // Anlässe sheets so IDs are never reused across school years –
+  // helps audit-trail integrity and iCal UIDs.
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
-    var values = sheet.getDataRange().getValues();
-    var maxId = 0;
-    for (var i = 1; i < values.length; i++) {
-      var id = parseInt(values[i][0]) || 0;
-      if (id > maxId) maxId = id;
-    }
+    var newId = nextAnlassId();
+    // Status="aktiv" by default; Schuljahr is derived. The COUNTIFS
+    // formula for the Angemeldete column is set in a follow-up
+    // setFormula() call because the formula needs the row index, which
+    // we only know after the append.
     sheet.appendRow([
-      maxId + 1,
+      newId,
       sheetSafe(name),
       datum,
       sheetSafe(zeit),
       helfer,
-      0,
-      sheetSafe(beschreibung)
+      0, // Angemeldete – overwritten with formula immediately below
+      sheetSafe(beschreibung),
+      'aktiv',
+      schuljahrFor(datum),
+      '', // Sichtbar? – formula written by setupVerstaerken/refresh
+      ''  // Notizen
     ]);
-    logAudit('ANLASS_HINZUGEFUEGT', { id: maxId + 1, name: name, datum: datum }, true, null);
+    var newRow = sheet.getLastRow();
+    sheet.getRange(newRow, 6).setFormula(angemeldeteFormulaForRow(newRow));
+    sheet.getRange(newRow, 10).setFormula(sichtbarFormulaForRow(newRow));
+    logAudit('ANLASS_HINZUGEFUEGT', { id: newId, name: name, datum: datum }, true, null);
   } finally {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
 }
+
+// =============================================================
+// === Schema foundation (PR 1: Sheet schema robustness) =======
+// =============================================================
+//
+// The Sheet, not the script, is the source of truth. Counts come from
+// COUNTIFS over Anmeldungen. Status drives visibility. setupVerstaerken
+// is idempotent: re-running it re-applies validations, formulas,
+// conditional formatting, and header protection without disturbing data.
+
+var ANLASS_HEADERS = [
+  'ID', 'Name', 'Datum', 'Zeit', 'Benötigte Helfer', 'Angemeldete',
+  'Beschreibung', 'Status', 'Schuljahr', 'Sichtbar?', 'Notizen (intern)'
+];
+var ANMELDUNG_HEADERS = [
+  'Zeitstempel', 'Anlass-ID', 'Name', 'E-Mail', 'Telefon', 'Anlass',
+  'Status', 'Notizen'
+];
+var ANLASS_STATUS_VALUES = ['aktiv', 'abgesagt', 'archiviert'];
+var ANMELDUNG_STATUS_VALUES = ['aktiv', 'storniert', 'nicht erschienen'];
+
+/**
+ * School year for a given date, "YYYY/YY". Swiss school year runs
+ * August → July, so August 2025 belongs to 2025/26 and June 2026 still
+ * belongs to 2025/26.
+ */
+function schuljahrFor(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  var y = date.getFullYear();
+  var startYear = date.getMonth() >= 7 ? y : y - 1;
+  var endShort = ('0' + ((startYear + 1) % 100)).slice(-2);
+  return startYear + '/' + endShort;
+}
+
+/**
+ * Per-row formula for Anlässe!F (Angemeldete). Counts every row in
+ * Anmeldungen that has the same Anlass-ID and a Status that is not
+ * "storniert". Blank Status counts as active – keeps backward
+ * compatibility with rows registered before the Status column existed.
+ */
+function angemeldeteFormulaForRow(row) {
+  return '=IF(A' + row + '="","",COUNTIFS(' +
+         'Anmeldungen!$B:$B,A' + row + ',' +
+         'Anmeldungen!$G:$G,"<>storniert"))';
+}
+
+/**
+ * Per-row formula for Anlässe!J (Sichtbar?). Tells the admin in plain
+ * German why an event is or is not on the public site. Mirrors the
+ * filter logic of getAktiveAnlaesse() but lives in the Sheet so admins
+ * see it without opening the website.
+ */
+function sichtbarFormulaForRow(row) {
+  return '=IFS(' +
+         'A' + row + '="","",' +
+         'H' + row + '="abgesagt","nein – abgesagt",' +
+         'H' + row + '="archiviert","nein – archiviert",' +
+         'NOT(ISNUMBER(C' + row + ')),"nein – Datum ungültig",' +
+         'C' + row + '<TODAY(),"nein – Datum vorbei",' +
+         'AND(ISNUMBER(E' + row + '),ISNUMBER(F' + row + '),F' + row + '>=E' + row + '),"voll – wird trotzdem angezeigt",' +
+         'TRUE,"ja"' +
+         ')';
+}
+
+/**
+ * Search every Anlass-bearing sheet (live + archive) for the highest
+ * numeric ID and return the next one. Prevents ID reuse across school
+ * years so iCal UIDs and audit-log references stay unambiguous forever.
+ */
+function nextAnlassId() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var max = 0;
+  ss.getSheets().forEach(function(s) {
+    var name = s.getName();
+    if (name !== 'Anlässe' && name.indexOf('Archiv Anlässe') !== 0) return;
+    var lastRow = s.getLastRow();
+    if (lastRow < 2) return;
+    var ids = s.getRange(2, 1, lastRow - 1, 1).getValues();
+    ids.forEach(function(r) {
+      var n = parseInt(r[0], 10);
+      if (!isNaN(n) && n > max) max = n;
+    });
+  });
+  return max + 1;
+}
+
+/**
+ * Idempotent migration / re-application of the robust schema. Adds
+ * missing columns, applies validations, sets formulas, applies
+ * conditional formatting, protects header rows, back-fills defaults,
+ * and ensures the Anleitung sheet exists. Safe to run any number of
+ * times.
+ */
+function setupVerstaerken() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!anlassSheet || !helferSheet) {
+    ui.alert('Bitte zuerst "Erstes Setup" ausführen – die Tabellenblätter "Anlässe" und "Anmeldungen" fehlen.');
+    return;
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    ensureHeaders(anlassSheet, ANLASS_HEADERS, '#1e3a5f');
+    ensureHeaders(helferSheet, ANMELDUNG_HEADERS, '#1a7d36');
+
+    backfillAnlassDefaults(anlassSheet);
+    backfillAnmeldungDefaults(helferSheet);
+
+    writeAnlassFormulas(anlassSheet);
+    applyAnlassValidations(anlassSheet);
+    applyAnmeldungValidations(helferSheet);
+    applyAnlassConditionalFormatting(anlassSheet);
+    protectHeaderRow(anlassSheet);
+    protectHeaderRow(helferSheet);
+    ensureAnleitungSheet(ss);
+
+    logAudit('SETUP_VERSTAERKT', {
+      anlassRows: Math.max(anlassSheet.getLastRow() - 1, 0),
+      anmeldungRows: Math.max(helferSheet.getLastRow() - 1, 0)
+    }, true, null);
+  } catch (e) {
+    logAudit('SETUP_VERSTAERKT', {}, false, String(e));
+    ui.alert('Fehler beim Verstärken: ' + e);
+    return;
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+
+  ui.alert(
+    '✅ Setup verstärkt.\n\n' +
+    '• Spalten "Status", "Schuljahr", "Sichtbar?", "Notizen" auf Anlässe.\n' +
+    '• Spalten "Status", "Notizen" auf Anmeldungen.\n' +
+    '• "Angemeldete" wird jetzt automatisch berechnet (COUNTIFS-Formel).\n' +
+    '• Datum, Pflichtfelder und Status werden in Echtzeit validiert.\n' +
+    '• Volle/abgesagte/vergangene Anlässe werden farblich markiert.\n' +
+    '• Tab "Anleitung" gibt eine Schritt-für-Schritt-Hilfe.\n\n' +
+    'Die Aktion ist idempotent – Sie können sie jederzeit erneut ausführen.'
+  );
+}
+
+/**
+ * Make sure a sheet's header row matches the canonical headers. Adds
+ * missing columns at the right of the existing row (without disturbing
+ * data) and writes any updated header text.
+ */
+function ensureHeaders(sheet, headers, bg) {
+  var maxCol = sheet.getMaxColumns();
+  if (maxCol < headers.length) {
+    sheet.insertColumnsAfter(maxCol, headers.length - maxCol);
+  }
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length)
+    .setBackground(bg).setFontColor('white').setFontWeight('bold');
+  sheet.setFrozenRows(1);
+}
+
+/**
+ * Back-fill Anlässe defaults: Status=aktiv, Schuljahr from Datum,
+ * Notizen blank. Existing values are preserved – we only fill blanks.
+ */
+function backfillAnlassDefaults(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var range = sheet.getRange(2, 1, lastRow - 1, ANLASS_HEADERS.length);
+  var values = range.getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (!values[i][0]) continue; // skip blank rows
+    if (!values[i][7]) values[i][7] = 'aktiv';      // Status
+    if (!values[i][8]) {                              // Schuljahr
+      var d = parseDate(values[i][2]);
+      if (d) values[i][8] = schuljahrFor(d);
+    }
+    if (values[i][10] == null) values[i][10] = '';   // Notizen
+  }
+  range.setValues(values);
+}
+
+function backfillAnmeldungDefaults(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var range = sheet.getRange(2, 7, lastRow - 1, 2); // Status, Notizen
+  var values = range.getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (!values[i][0]) values[i][0] = 'aktiv';
+    if (values[i][1] == null) values[i][1] = '';
+  }
+  range.setValues(values);
+}
+
+/**
+ * Write per-row formulas for Angemeldete (col 6) and Sichtbar? (col 10)
+ * across every populated row. Uses setFormulas in two batches.
+ */
+function writeAnlassFormulas(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var angemeldete = [];
+  var sichtbar = [];
+  for (var r = 2; r <= lastRow; r++) {
+    angemeldete.push([angemeldeteFormulaForRow(r)]);
+    sichtbar.push([sichtbarFormulaForRow(r)]);
+  }
+  sheet.getRange(2, 6, angemeldete.length, 1).setFormulas(angemeldete);
+  sheet.getRange(2, 10, sichtbar.length, 1).setFormulas(sichtbar);
+}
+
+function applyAnlassValidations(sheet) {
+  var maxRow = Math.max(sheet.getMaxRows() - 1, 1000);
+  // Datum (C): real date, reject everything else
+  var dateRule = SpreadsheetApp.newDataValidation()
+    .requireDate().setAllowInvalid(false)
+    .setHelpText('Bitte ein gültiges Datum auswählen (TT.MM.JJJJ).')
+    .build();
+  sheet.getRange(2, 3, maxRow, 1).setDataValidation(dateRule);
+
+  // Benötigte Helfer (E): integer ≥ 1
+  var helferRule = SpreadsheetApp.newDataValidation()
+    .requireNumberGreaterThanOrEqualTo(1).setAllowInvalid(false)
+    .setHelpText('Mindestens 1 Helfer erforderlich.')
+    .build();
+  sheet.getRange(2, 5, maxRow, 1).setDataValidation(helferRule);
+
+  // Status (H): dropdown
+  var statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(ANLASS_STATUS_VALUES, true).setAllowInvalid(false)
+    .setHelpText('Status: aktiv, abgesagt oder archiviert.')
+    .build();
+  sheet.getRange(2, 8, maxRow, 1).setDataValidation(statusRule);
+
+  // ID (A): unique. Custom-formula validation; reject duplicates.
+  var uniqueRule = SpreadsheetApp.newDataValidation()
+    .requireFormulaSatisfied('=COUNTIF($A$2:$A,A2)<2').setAllowInvalid(false)
+    .setHelpText('Diese Anlass-ID wird bereits verwendet.')
+    .build();
+  sheet.getRange(2, 1, maxRow, 1).setDataValidation(uniqueRule);
+}
+
+function applyAnmeldungValidations(sheet) {
+  var maxRow = Math.max(sheet.getMaxRows() - 1, 1000);
+  var statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(ANMELDUNG_STATUS_VALUES, true).setAllowInvalid(false)
+    .setHelpText('Status: aktiv, storniert oder nicht erschienen.')
+    .build();
+  sheet.getRange(2, 7, maxRow, 1).setDataValidation(statusRule);
+}
+
+/**
+ * Conditional formatting rules on Anlässe. Order matters: later rules
+ * override earlier ones for the same cell. We want past/cancelled to
+ * dominate full-but-active.
+ */
+function applyAnlassConditionalFormatting(sheet) {
+  var range = sheet.getRange(2, 1, Math.max(sheet.getMaxRows() - 1, 1000), ANLASS_HEADERS.length);
+
+  var rules = [];
+
+  // Almost full (>= 50% but not full): subtle yellow
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND($A2<>"",$E2>0,$F2/$E2>=0.5,$F2<$E2)')
+    .setBackground('#fef3c7').setRanges([range]).build());
+
+  // Full: muted green
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND($A2<>"",$E2>0,$F2>=$E2)')
+    .setBackground('#d1fae5').setRanges([range]).build());
+
+  // Past events: light grey + strikethrough
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND($A2<>"",ISNUMBER($C2),$C2<TODAY())')
+    .setBackground('#f1f5f9').setFontColor('#94a3b8').setStrikethrough(true)
+    .setRanges([range]).build());
+
+  // Cancelled: red text overrides everything visually
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=$H2="abgesagt"')
+    .setFontColor('#dc2626').setBold(true)
+    .setRanges([range]).build());
+
+  // Archived: light italics, very subtle
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=$H2="archiviert"')
+    .setFontColor('#64748b').setItalic(true)
+    .setRanges([range]).build());
+
+  sheet.setConditionalFormatRules(rules);
+}
+
+/**
+ * Protect the header row with warning level – the script (running as
+ * the spreadsheet owner) can still write, but a human accidentally
+ * editing a header gets a confirmation dialog. Header rename was the
+ * single most damaging mistake the old schema permitted: it silently
+ * broke the public site without any error.
+ */
+function protectHeaderRow(sheet) {
+  var existing = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+  for (var i = 0; i < existing.length; i++) {
+    if (existing[i].getDescription() === 'Header (nicht ändern)') {
+      existing[i].remove();
+    }
+  }
+  var protection = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).protect()
+    .setDescription('Header (nicht ändern)');
+  protection.setWarningOnly(true);
+}
+
+/**
+ * Create or refresh the Anleitung tab. Keeps it as the leftmost sheet
+ * so newcomers see it first.
+ */
+function ensureAnleitungSheet(ss) {
+  var sheet = ss.getSheetByName('Anleitung') || ss.insertSheet('Anleitung', 0);
+  if (sheet.getIndex() !== 1) ss.setActiveSheet(sheet) && ss.moveActiveSheet(1);
+  sheet.clear();
+  sheet.setHiddenGridlines(true);
+  var lines = [
+    ['🏰 Schulhelfer Rittergasse – Anleitung'],
+    [''],
+    ['Live-Seite:'],
+    ['https://ps-rittergasse.github.io/helferliste/'],
+    [''],
+    ['ANLÄSSE – Spalten'],
+    ['  ID                Wird automatisch vergeben (Menü → Neuer Anlass).'],
+    ['  Name              Kurz und klar.'],
+    ['  Datum             Echtes Datum (das Sheet validiert).'],
+    ['  Zeit              Frei: "14:00-18:00", "ab 16:00", "morgens / abends"…'],
+    ['  Benötigte Helfer  Mindestens 1.'],
+    ['  Angemeldete       AUTOMATISCH (Formel) – nicht überschreiben.'],
+    ['  Beschreibung      Was sollen die Helfer tun?'],
+    ['  Status            aktiv (öffentlich) / abgesagt / archiviert.'],
+    ['  Schuljahr         AUTOMATISCH aus dem Datum (z.B. "2025/26").'],
+    ['  Sichtbar?         AUTOMATISCH – zeigt, warum ein Anlass evtl. ausgeblendet ist.'],
+    ['  Notizen (intern)  Nur intern, wird nicht öffentlich angezeigt.'],
+    [''],
+    ['EINEN ANLASS ABSAGEN'],
+    ['  Status auf "abgesagt" setzen — die Zeile NICHT löschen. So bleiben'],
+    ['  die Anmeldungen erhalten und Sie können die Helfer kontaktieren.'],
+    [''],
+    ['ANMELDUNGEN'],
+    ['  Status "storniert" für abgemeldete Helfer (Slot wird wieder frei).'],
+    ['  Status "nicht erschienen" für Nachverfolgung nach dem Anlass.'],
+    [''],
+    ['BEI PROBLEMEN'],
+    ['  Menü → "Setup verstärken": stellt Validierung & Formeln wieder her.'],
+    ['  Menü → "Zähler neu berechnen": nur bei sehr alten Sheets nötig.']
+  ];
+  sheet.getRange(1, 1, lines.length, 1).setValues(lines);
+  sheet.getRange(1, 1).setFontSize(18).setFontWeight('bold').setFontColor('#1e3a5f');
+  [6, 19, 23, 27].forEach(function(r) {
+    sheet.getRange(r, 1).setFontWeight('bold').setFontSize(12).setFontColor('#1e3a5f');
+  });
+  sheet.setColumnWidth(1, 760);
+}
+
