@@ -429,10 +429,16 @@ function handleAdminPost(action, data) {
 
   try {
     switch (action) {
-      case 'getAllEvents': return getAllEventsAdmin();
-      case 'addEvent':     return addEventAdmin(data);
-      case 'updateEvent':  return updateEventAdmin(data);
-      case 'cancelEvent':  return cancelEventAdmin(data);
+      case 'getAllEvents':        return getAllEventsAdmin();
+      case 'addEvent':            return addEventAdmin(data);
+      case 'updateEvent':         return updateEventAdmin(data);
+      case 'cancelEvent':         return cancelEventAdmin(data);
+      case 'getRegistrations':    return getRegistrationsAdmin(data);
+      case 'addRegistration':     return addRegistrationAdmin(data);
+      case 'updateRegistration':  return updateRegistrationAdmin(data);
+      case 'archiveSchuljahr':    return archiveSchuljahrAdmin(data);
+      case 'integrityCheck':      return integrityCheckAdmin();
+      case 'availableSchuljahre': return availableSchuljahreAdmin();
       default:
         return { success: false, error: 'Unbekannte Aktion: ' + action };
     }
@@ -628,6 +634,166 @@ function validateEventInput(data) {
     helfer: helfer,
     datum: datum
   };
+}
+
+// =============================================================
+// === Admin v2: helpers + archive + integrity (PR 4) ==========
+// =============================================================
+
+/**
+ * Return every registration row for one event, including Status and
+ * Notizen. The frontend uses this for the per-event helper drawer.
+ * Phone numbers are normalised on read so display stays consistent
+ * even for rows registered before the write-side normalisation
+ * landed.
+ */
+function getRegistrationsAdmin(data) {
+  var eventId = String(data && data.eventId || '').trim();
+  if (!eventId) return { success: false, error: 'Anlass-ID fehlt.' };
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!helferSheet) return { success: false, error: 'Tabellenblatt "Anmeldungen" fehlt.' };
+
+  var lastRow = helferSheet.getLastRow();
+  if (lastRow < 2) return { success: true, registrations: [] };
+
+  var values = helferSheet.getRange(2, 1, lastRow - 1, ANMELDUNG_HEADERS.length).getValues();
+  var registrations = [];
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][1] || '') !== eventId) continue;
+    var ts = values[i][0];
+    registrations.push({
+      // (eventId, email) pair is enforced unique by registriereHelfer's
+      // duplicate check, so we use email as the natural row key.
+      eventId: eventId,
+      email: String(values[i][3] || '').toLowerCase().trim(),
+      zeitstempel: ts instanceof Date ? ts.toISOString() : String(ts || ''),
+      name: sanitizeInput(String(values[i][2] || '')),
+      telefon: normalizePhone(sanitizeInput(String(values[i][4] || ''))),
+      anlassName: sanitizeInput(String(values[i][5] || '')),
+      status: String(values[i][6] || 'aktiv').toLowerCase() || 'aktiv',
+      notizen: String(values[i][7] || '')
+    });
+  }
+  // Stable order: registration time ascending.
+  registrations.sort(function(a, b) {
+    return new Date(a.zeitstempel || 0).getTime() - new Date(b.zeitstempel || 0).getTime();
+  });
+  return { success: true, registrations: registrations };
+}
+
+/**
+ * Admin-driven manual registration. Reaches the same write path as
+ * the public form (registriereHelfer → LockService → capacity check
+ * → COUNTIFS-aware append) but is exempt from the public POST rate
+ * limit (we got here via the admin path which has its own quota).
+ *
+ * The audit-log line tags source='admin-manual' so the school's
+ * compliance trail stays unambiguous.
+ */
+function addRegistrationAdmin(data) {
+  if (!data || !data.anlassId || !data.name || !data.email) {
+    return { success: false, error: 'Pflichtfelder fehlen.' };
+  }
+  var result = registriereHelfer({
+    anlassId: data.anlassId,
+    name: data.name,
+    email: data.email,
+    telefon: data.telefon || ''
+  });
+  logAudit('ADMIN_ADD_REGISTRATION',
+    { anlassId: data.anlassId, email: data.email, source: 'admin-manual' },
+    !!result.success, result.message);
+  // Normalise the response shape so the admin UI sees `error` like
+  // every other admin endpoint.
+  if (result.success) return { success: true, message: result.message };
+  return { success: false, error: result.message };
+}
+
+/**
+ * Update Status / Notizen of a single registration. The (eventId,
+ * email) pair is the natural key – registriereHelfer enforces it
+ * unique on the live sheet.
+ */
+function updateRegistrationAdmin(data) {
+  var eventId = String(data && data.eventId || '').trim();
+  var email = String(data && data.email || '').toLowerCase().trim();
+  if (!eventId || !email) return { success: false, error: 'eventId und email erforderlich.' };
+
+  var newStatus = data.status ? String(data.status).toLowerCase() : null;
+  if (newStatus && ANMELDUNG_STATUS_VALUES.indexOf(newStatus) === -1) {
+    return { success: false, error: 'Ungültiger Status: ' + newStatus };
+  }
+  var newNotizen = data.notizen != null ? String(data.notizen) : null;
+  if (newNotizen != null && newNotizen.length > MAX_DESC_LEN) {
+    return { success: false, error: 'Notiz zu lang.' };
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!helferSheet) return { success: false, error: 'Tabellenblatt fehlt.' };
+
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) return { success: false, error: 'Server gerade ausgelastet.' };
+    var lastRow = helferSheet.getLastRow();
+    if (lastRow < 2) return { success: false, error: 'Anmeldung nicht gefunden.' };
+    var values = helferSheet.getRange(2, 1, lastRow - 1, ANMELDUNG_HEADERS.length).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var rowEvent = String(values[i][1] || '').trim();
+      var rowEmail = String(values[i][3] || '').toLowerCase().trim();
+      if (rowEvent !== eventId || rowEmail !== email) continue;
+      var rowIdx = i + 2;
+      if (newStatus) helferSheet.getRange(rowIdx, 7).setValue(newStatus);
+      if (newNotizen != null) helferSheet.getRange(rowIdx, 8).setValue(sheetSafe(newNotizen));
+      logAudit('ADMIN_UPDATE_REGISTRATION',
+        { eventId: eventId, email: email, status: newStatus, notesLen: newNotizen ? newNotizen.length : null },
+        true, null);
+      return { success: true };
+    }
+    return { success: false, error: 'Anmeldung nicht gefunden.' };
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+/** Wrapper around archiviereSchuljahr() for the admin POST path. */
+function archiveSchuljahrAdmin(data) {
+  var jahr = String(data && data.jahr || '').trim();
+  if (!jahr) return { success: false, error: 'Schuljahr erforderlich.' };
+  var result = archiviereSchuljahr(jahr);
+  // archiviereSchuljahr returns {success, message} — admin UI expects
+  // {success, error|message}. Normalise.
+  if (result.success) return result;
+  return { success: false, error: result.message || 'Archiv fehlgeschlagen.' };
+}
+
+/** Wrapper around buildIntegrityReport for the admin POST path. */
+function integrityCheckAdmin() {
+  var report = buildIntegrityReport();
+  if (report.success === false) return { success: false, error: report.error };
+  logAudit('ADMIN_INTEGRITY_CHECK', { findings: report.findings.length }, true, null);
+  return { success: true, findings: report.findings };
+}
+
+/**
+ * Available school years for the archive dialog. Returns an array of
+ * { jahr, events, registrations }. Only past years are returned —
+ * the current year cannot be archived.
+ */
+function availableSchuljahreAdmin() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  if (!anlassSheet) return { success: true, years: [] };
+  var current = schuljahrFor(new Date());
+  var jahre = availableSchuljahre(anlassSheet)
+    .filter(function(y) { return y && y !== current; });
+  var enriched = jahre.map(function(j) {
+    var stats = schuljahrStats(j);
+    return { jahr: j, events: stats.events, registrations: stats.registrations };
+  });
+  return { success: true, years: enriched, currentYear: current };
 }
 
 // === Get Active Events ===
@@ -2109,12 +2275,31 @@ function protectArchiveSheet(sheet, jahr) {
 
 function integritaetspruefung() {
   var ui = SpreadsheetApp.getUi();
+  var report = buildIntegrityReport();
+  if (report.success === false) {
+    ui.alert(report.error || 'Tabellenblätter fehlen.');
+    return;
+  }
+  logAudit('INTEGRITAETSPRUEFUNG', { findings: report.findings.length }, true, null);
+  if (report.findings.length === 0) {
+    ui.alert('✅ Datenprüfung', 'Alles sauber. Keine Auffälligkeiten gefunden.', ui.ButtonSet.OK);
+  } else {
+    ui.alert('🔍 Datenprüfung – ' + report.findings.length + ' Befund(e)',
+             report.findings.join('\n\n'), ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * Pure-data variant of the integrity check. Used by both the in-Sheet
+ * menu (which alerts) and the admin POST endpoint (which serialises
+ * the result into JSON for the web UI). Never touches the UI.
+ */
+function buildIntegrityReport() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var anlassSheet = ss.getSheetByName('Anlässe');
   var helferSheet = ss.getSheetByName('Anmeldungen');
   if (!anlassSheet || !helferSheet) {
-    ui.alert('Tabellenblätter fehlen.');
-    return;
+    return { success: false, error: 'Tabellenblätter fehlen.' };
   }
 
   var report = [];
@@ -2223,13 +2408,7 @@ function integritaetspruefung() {
     }
   }
 
-  logAudit('INTEGRITAETSPRUEFUNG', { findings: report.length }, true, null);
-
-  if (report.length === 0) {
-    ui.alert('✅ Datenprüfung', 'Alles sauber. Keine Auffälligkeiten gefunden.', ui.ButtonSet.OK);
-  } else {
-    ui.alert('🔍 Datenprüfung – ' + report.length + ' Befund(e)', report.join('\n\n'), ui.ButtonSet.OK);
-  }
+  return { success: true, findings: report };
 }
 
 

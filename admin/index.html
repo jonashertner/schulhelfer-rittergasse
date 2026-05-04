@@ -69,6 +69,10 @@
       <div class="admin-toolbar">
         <button type="button" class="btn btn-primary" id="new-event-btn">+ Neuer Anlass</button>
         <button type="button" class="btn btn-secondary" id="refresh-btn" aria-label="Liste aktualisieren">↻</button>
+        <span class="toolbar-spacer"></span>
+        <button type="button" class="btn btn-ghost" id="integrity-btn" title="Auf Datenfehler prüfen">🔍 Daten prüfen</button>
+        <button type="button" class="btn btn-ghost" id="archive-btn" title="Vergangenes Schuljahr archivieren">📂 Schuljahr archivieren</button>
+        <a class="btn btn-ghost" id="sheet-link" href="#" target="_blank" rel="noopener noreferrer" title="Google-Tabelle öffnen (für Fortgeschrittene)">📋 Tabelle</a>
       </div>
 
       <div id="loading-banner" class="admin-banner admin-banner--info" hidden>Wird geladen…</div>
@@ -166,9 +170,112 @@
     </div>
   </div>
 
+  <!-- ============================ Helpers (per-event) modal ============================ -->
+  <div id="helpers-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="helpers-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content modal-content--wide">
+      <header class="modal-head">
+        <h2 id="helpers-title">Helfer</h2>
+        <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
+      </header>
+      <p id="helpers-event-meta" class="helpers-meta"></p>
+      <div id="helpers-error" class="error-msg" hidden></div>
+      <div id="helpers-list" class="helpers-list"></div>
+      <p id="helpers-empty" class="admin-empty" hidden>Noch keine Anmeldungen.</p>
+      <div class="helpers-bulk">
+        <button type="button" class="btn btn-secondary" id="helpers-mailto-btn">📧 E-Mail an alle</button>
+        <button type="button" class="btn btn-primary" id="helpers-add-btn">+ Helfer manuell eintragen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ Manual helper entry modal ============================ -->
+  <div id="manual-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="manual-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content modal-content--small">
+      <header class="modal-head">
+        <h2 id="manual-title">Helfer manuell eintragen</h2>
+        <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
+      </header>
+      <form id="manual-form" novalidate>
+        <input type="hidden" id="manual-event-id">
+        <p id="manual-event-name" class="helpers-meta"></p>
+        <div class="form-row">
+          <label for="manual-name">Name <span class="req" aria-hidden="true">*</span></label>
+          <input type="text" id="manual-name" required maxlength="100" placeholder="Vor- und Nachname">
+        </div>
+        <div class="form-row">
+          <label for="manual-email">E-Mail <span class="req" aria-hidden="true">*</span></label>
+          <input type="email" id="manual-email" required maxlength="254" placeholder="email@beispiel.ch">
+        </div>
+        <div class="form-row">
+          <label for="manual-tel">Telefon <span class="hint">(optional)</span></label>
+          <input type="tel" id="manual-tel" maxlength="30" placeholder="+41 79 123 45 67">
+        </div>
+        <p id="manual-error" class="error-msg" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-close>Abbrechen</button>
+          <button type="submit" class="btn btn-primary" id="manual-save-btn">
+            <span class="btn-label">Eintragen</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================ Archive modal ============================ -->
+  <div id="archive-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="archive-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content modal-content--small">
+      <header class="modal-head">
+        <h2 id="archive-title">📂 Schuljahr archivieren</h2>
+        <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
+      </header>
+      <div class="modal-body">
+        <p>Anlässe und Anmeldungen des gewählten Schuljahrs werden in dedizierte Archiv-Tabs verschoben und dort schreibgeschützt. IDs bleiben global eindeutig — auch in zukünftigen Schuljahren werden archivierte IDs nicht wiederverwendet.</p>
+        <div class="form-row">
+          <label for="archive-year">Schuljahr</label>
+          <select id="archive-year"></select>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="archive-confirm">
+          <span>Ich habe geprüft, dass nichts mehr geändert werden muss.</span>
+        </label>
+        <p id="archive-error" class="error-msg" hidden></p>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close>Abbrechen</button>
+        <button type="button" class="btn btn-primary" id="archive-go-btn" disabled>
+          <span class="btn-label">Archivieren</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============================ Integrity result modal ============================ -->
+  <div id="integrity-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="integrity-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content">
+      <header class="modal-head">
+        <h2 id="integrity-title">🔍 Datenprüfung</h2>
+        <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
+      </header>
+      <div class="modal-body">
+        <div id="integrity-loading" hidden>Wird geprüft…</div>
+        <div id="integrity-result"></div>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close>Schliessen</button>
+      </footer>
+    </div>
+  </div>
+
   <script>
     const CONFIG = {
-      API_URL: 'https://script.google.com/macros/s/AKfycbzeyNTd8C1rmas-Nk5sF--Aa2Ck6ugw-wd6ts2slxpaVV8M9JzmKZW7GzipXYRsDbEf/exec'
+      API_URL: 'https://script.google.com/macros/s/AKfycbzeyNTd8C1rmas-Nk5sF--Aa2Ck6ugw-wd6ts2slxpaVV8M9JzmKZW7GzipXYRsDbEf/exec',
+      SPREADSHEET_URL: 'https://docs.google.com/spreadsheets/d/1j844wKN_NrXyPSVyf1iuNfxydpGdUCOzQg9HQn549Qg/edit?usp=sharing'
     };
   </script>
   <script src="admin.js"></script>

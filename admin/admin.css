@@ -338,6 +338,123 @@
   margin: 0;
 }
 
+/* ----- Toolbar layout (PR 4 additions) ----- */
+.admin-toolbar { flex-wrap: wrap; }
+.toolbar-spacer { flex: 1; min-width: 0; }
+.admin-toolbar .btn-ghost { font-size: 13px; }
+
+/* ----- Helpers modal (per-event drawer) ----- */
+.modal-content--wide { max-width: 720px; }
+.helpers-meta {
+  margin: 0 0 var(--space-4); color: var(--gray-600); font-size: 13px;
+}
+.helpers-list {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  max-height: 50vh; overflow: auto;
+  padding: 2px;
+}
+.helper-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
+  gap: var(--space-2);
+  align-items: center;
+  background: var(--cream);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.helper-row.is-storniert { opacity: 0.5; }
+.helper-row.is-noshow { background: var(--warning-bg); }
+.helper-row .h-name { font-weight: 600; color: var(--gray-800); overflow-wrap: anywhere; }
+.helper-row .h-email a,
+.helper-row .h-tel a {
+  color: var(--gray-600); text-decoration: none;
+}
+.helper-row .h-email a:hover,
+.helper-row .h-tel a:hover { color: var(--gray-800); text-decoration: underline; }
+.helper-row select {
+  font-family: var(--font); font-size: 12px;
+  padding: 4px 6px; border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
+  background: var(--white);
+}
+.helper-row .h-noteBtn {
+  background: transparent; border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm); padding: 4px 8px;
+  cursor: pointer; font-size: 12px; color: var(--gray-600);
+}
+.helper-row .h-noteBtn:hover { background: var(--gray-100); color: var(--gray-800); }
+.helper-row .h-noteBtn.has-note { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+.helper-row .h-note-edit {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  display: flex; gap: 6px; align-items: stretch;
+}
+.helper-row .h-note-edit input {
+  flex: 1; padding: 6px 8px; font-size: 13px;
+  border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
+  background: var(--white); color: var(--gray-800);
+}
+.helper-row .h-note-edit button {
+  font-size: 12px; padding: 6px 10px;
+}
+
+@media (max-width: 600px) {
+  .helper-row { grid-template-columns: 1fr; }
+  .helper-row > * { min-width: 0; }
+}
+
+.helpers-bulk {
+  display: flex; gap: var(--space-3); justify-content: flex-end;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--gray-200);
+}
+
+/* ----- Helper count button on event card ----- */
+.helpers-btn {
+  background: transparent;
+  border: 1px solid var(--gray-200);
+  color: var(--gray-700);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer;
+}
+.helpers-btn:hover { background: var(--gray-100); }
+
+/* ----- Archive / Integrity modal extras ----- */
+.checkbox-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin: var(--space-4) 0;
+  font-size: 13px; color: var(--gray-700);
+  cursor: pointer;
+}
+.checkbox-row input { margin-top: 3px; flex-shrink: 0; }
+
+#integrity-result { font-size: 13px; line-height: 1.6; color: var(--gray-700); }
+#integrity-result .integrity-line {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: var(--radius);
+  background: var(--gray-100);
+  border-left: 3px solid var(--gray-300);
+  white-space: pre-wrap;
+}
+#integrity-result .integrity-line.is-warn { background: var(--warning-bg); border-color: var(--warning); }
+#integrity-result .integrity-line.is-ok {
+  background: var(--success-bg); color: var(--success); border-color: var(--success);
+  font-weight: 600;
+}
+
+select#archive-year {
+  font-family: var(--font);
+  width: 100%; padding: 10px 12px;
+  border: 1.5px solid var(--gray-200); border-radius: var(--radius);
+  background: var(--cream); font-size: 14px;
+}
+select#archive-year:focus { border-color: var(--sage); outline: none; }
+
 /* ----- Dark mode passthrough -----
    We rely on the public site's :root[data-theme=dark] vars.
    Minor adjustments here only where contrast needs help.
