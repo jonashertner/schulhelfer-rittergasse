@@ -957,6 +957,9 @@ function onOpen() {
     .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
     .addItem('Daten exportieren', 'exportDataAsCSV')
     .addSeparator()
+    .addItem('Schuljahr archivieren…', 'archiviereSchuljahrDialog')
+    .addItem('Daten prüfen', 'integritaetspruefung')
+    .addSeparator()
     .addItem('Alte Anlässe bereinigen', 'alteAnlaesseBereinigen')
     .addItem('Admin-Status prüfen', 'adminKeyStatus')
     .addItem('Audit-Log anzeigen', 'zeigeAuditLog')
@@ -1542,4 +1545,449 @@ function ensureAnleitungSheet(ss) {
   });
   sheet.setColumnWidth(1, 760);
 }
+
+// =============================================================
+// === Year-end archive (PR 2) =================================
+// =============================================================
+//
+// Per Swiss school year (Aug → Jul) we move events and their
+// registrations into dedicated "Archiv …" tabs. The live sheets stay
+// small year over year. Archive tabs are warning-protected so admins
+// don't accidentally edit historical records.
+//
+// Design invariants:
+//   1. Source-of-truth IDs never repeat. nextAnlassId() scans the
+//      live sheet AND every archive sheet, guaranteeing iCal UIDs and
+//      audit-log refs stay unambiguous forever.
+//   2. The archive function copies-then-deletes. A crash mid-run
+//      leaves duplicates in the archive on retry, never lost data.
+//   3. LockService blocks concurrent registrations during archive.
+
+/**
+ * Show a dialog letting the admin pick a school year (with the most
+ * recent past year as default), confirm intent, and trigger the move.
+ */
+function archiviereSchuljahrDialog() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
+  if (!sheet) {
+    ui.alert('Tabellenblatt "Anlässe" fehlt.');
+    return;
+  }
+
+  var heuteYear = schuljahrFor(new Date());
+  var available = availableSchuljahre(sheet)
+    .filter(function(y) { return y && y !== heuteYear; });
+
+  if (available.length === 0) {
+    ui.alert(
+      'Schuljahr archivieren',
+      'Es gibt aktuell keine abgeschlossenen Schuljahre zum Archivieren.\n\n' +
+      '(Das laufende Schuljahr ' + heuteYear + ' kann nicht archiviert werden.)',
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+
+  // Build the dialog HTML. Default option = most recent past year.
+  var options = available.map(function(y) {
+    var stats = schuljahrStats(y);
+    var label = y + '  (' + stats.events + ' Anlass/Anlässe, ' + stats.registrations + ' Anmeldungen)';
+    return { value: y, label: label };
+  });
+  var defaultYear = options[options.length - 1].value;
+
+  var html =
+    '<style>' +
+    '  body { font-family: -apple-system, system-ui, Arial, sans-serif; padding: 16px; color: #1e293b; }' +
+    '  h2 { margin: 0 0 8px 0; font-size: 18px; color: #1e3a5f; }' +
+    '  p { margin: 8px 0; line-height: 1.5; }' +
+    '  label { display: block; margin-top: 12px; font-weight: bold; }' +
+    '  select { width: 100%; padding: 10px; margin-top: 4px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }' +
+    '  .checkbox-row { margin-top: 14px; display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }' +
+    '  .buttons { margin-top: 18px; display: flex; gap: 8px; justify-content: flex-end; }' +
+    '  button { padding: 10px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; }' +
+    '  .primary { background: #1e3a5f; color: white; }' +
+    '  .primary:disabled { background: #cbd5e1; cursor: not-allowed; }' +
+    '  .secondary { background: #e2e8f0; color: #1e293b; }' +
+    '  .summary { margin-top: 12px; padding: 10px; background: #f8fafc; border-radius: 6px; font-size: 13px; }' +
+    '</style>' +
+    '<h2>Schuljahr archivieren</h2>' +
+    '<p>Anlässe und Anmeldungen des gewählten Schuljahrs werden in dedizierte Archiv-Tabs verschoben und dort schreibgeschützt.</p>' +
+    '<label>Schuljahr</label>' +
+    '<select id="year">' +
+    options.map(function(o) {
+      return '<option value="' + o.value + '"' + (o.value === defaultYear ? ' selected' : '') + '>' + o.label + '</option>';
+    }).join('') +
+    '</select>' +
+    '<div class="summary">Die IDs der Anlässe bleiben weltweit eindeutig – auch in zukünftigen Schuljahren werden archivierte IDs nicht wiederverwendet.</div>' +
+    '<div class="checkbox-row">' +
+    '  <input type="checkbox" id="confirm">' +
+    '  <label for="confirm" style="font-weight: normal; margin: 0;">Ich habe geprüft, dass ich für dieses Schuljahr nichts mehr ändern muss.</label>' +
+    '</div>' +
+    '<div class="buttons">' +
+    '  <button class="secondary" type="button" onclick="google.script.host.close()">Abbrechen</button>' +
+    '  <button class="primary" type="button" id="go" disabled onclick="run()">Archivieren</button>' +
+    '</div>' +
+    '<script>' +
+    '  var c = document.getElementById("confirm");' +
+    '  var b = document.getElementById("go");' +
+    '  c.addEventListener("change", function(){ b.disabled = !c.checked; });' +
+    '  function run(){' +
+    '    b.disabled = true; b.textContent = "Wird verschoben…";' +
+    '    google.script.run' +
+    '      .withSuccessHandler(function(res){' +
+    '        if (res && res.success) { alert("✅ " + res.message); google.script.host.close(); }' +
+    '        else { alert("Fehler: " + (res && res.message || "Unbekannter Fehler")); b.disabled = false; b.textContent = "Archivieren"; }' +
+    '      })' +
+    '      .withFailureHandler(function(err){' +
+    '        alert("Fehler: " + err); b.disabled = false; b.textContent = "Archivieren";' +
+    '      })' +
+    '      .archiviereSchuljahr(document.getElementById("year").value);' +
+    '  }' +
+    '</script>';
+
+  var output = HtmlService.createHtmlOutput(html).setWidth(440).setHeight(360);
+  ui.showModalDialog(output, '🗂️ Schuljahr archivieren');
+}
+
+/** Return the unique non-empty Schuljahr values in Anlässe, sorted. */
+function availableSchuljahre(anlassSheet) {
+  var lastRow = anlassSheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = anlassSheet.getRange(2, 9, lastRow - 1, 1).getValues();
+  var set = {};
+  for (var i = 0; i < values.length; i++) {
+    var v = String(values[i][0] || '').trim();
+    if (v) set[v] = true;
+  }
+  // For rows missing Schuljahr (un-migrated), derive from Datum.
+  var allValues = anlassSheet.getRange(2, 1, lastRow - 1, 9).getValues();
+  for (var j = 0; j < allValues.length; j++) {
+    if (!allValues[j][0]) continue;
+    var sj = String(allValues[j][8] || '').trim();
+    if (!sj) {
+      var d = parseDate(allValues[j][2]);
+      if (d) {
+        var derived = schuljahrFor(d);
+        if (derived) set[derived] = true;
+      }
+    }
+  }
+  return Object.keys(set).sort();
+}
+
+/** Count how many events + registrations would move for a given year. */
+function schuljahrStats(jahr) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!anlassSheet || !helferSheet) return { events: 0, registrations: 0 };
+
+  var ids = collectAnlassIdsForYear(anlassSheet, jahr);
+  var registrations = 0;
+  var lastHelfer = helferSheet.getLastRow();
+  if (lastHelfer >= 2) {
+    var helferData = helferSheet.getRange(2, 1, lastHelfer - 1, 2).getValues();
+    for (var i = 0; i < helferData.length; i++) {
+      if (ids.indexOf(String(helferData[i][1] || '')) !== -1) registrations++;
+    }
+  }
+  return { events: ids.length, registrations: registrations };
+}
+
+/**
+ * Find every Anlass-ID belonging to the given school year. Uses the
+ * Schuljahr column when present and falls back to deriving from Datum
+ * for un-migrated rows.
+ */
+function collectAnlassIdsForYear(anlassSheet, jahr) {
+  var lastRow = anlassSheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = anlassSheet.getRange(2, 1, lastRow - 1, ANLASS_HEADERS.length).getValues();
+  var ids = [];
+  for (var i = 0; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    var rowSj = String(values[i][8] || '').trim();
+    if (!rowSj) {
+      var d = parseDate(values[i][2]);
+      if (d) rowSj = schuljahrFor(d);
+    }
+    if (rowSj === jahr) ids.push(String(values[i][0]));
+  }
+  return ids;
+}
+
+/**
+ * The actual archive operation. Called from the dialog.
+ *
+ * Returns { success, message } – the dialog displays the message via
+ * an alert(). Errors are caught and surfaced with a friendly message.
+ */
+function archiviereSchuljahr(jahr) {
+  jahr = String(jahr || '').trim();
+  if (!jahr) return { success: false, message: 'Kein Schuljahr angegeben.' };
+  var current = schuljahrFor(new Date());
+  if (jahr === current) {
+    return { success: false, message: 'Das laufende Schuljahr kann nicht archiviert werden.' };
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!anlassSheet || !helferSheet) {
+    return { success: false, message: 'Tabellenblätter fehlen.' };
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(15000)) {
+      return { success: false, message: 'Server gerade ausgelastet. Bitte gleich erneut versuchen.' };
+    }
+
+    var anlassIds = collectAnlassIdsForYear(anlassSheet, jahr);
+    if (anlassIds.length === 0) {
+      return { success: false, message: 'Keine Anlässe für ' + jahr + ' gefunden.' };
+    }
+
+    // Slug used for the archive sheet name. Sheet names can contain "/"
+    // but it confuses some downstream tools, so use "-".
+    var slug = jahr.replace('/', '-');
+    var anlassArchiveName = 'Archiv Anlässe ' + slug;
+    var helferArchiveName = 'Archiv Anmeldungen ' + slug;
+
+    // Find which Anlässe + Anmeldungen rows to move.
+    var anlassLast = anlassSheet.getLastRow();
+    var anlassValues = anlassSheet.getRange(2, 1, anlassLast - 1, ANLASS_HEADERS.length).getValues();
+    var anlassToMove = [];
+    var anlassRowsToDelete = [];
+    for (var i = 0; i < anlassValues.length; i++) {
+      if (!anlassValues[i][0]) continue;
+      if (anlassIds.indexOf(String(anlassValues[i][0])) !== -1) {
+        anlassToMove.push(anlassValues[i]);
+        anlassRowsToDelete.push(i + 2); // 1-based row, header on row 1
+      }
+    }
+
+    var helferLast = helferSheet.getLastRow();
+    var helferToMove = [];
+    var helferRowsToDelete = [];
+    if (helferLast >= 2) {
+      var helferValues = helferSheet.getRange(2, 1, helferLast - 1, ANMELDUNG_HEADERS.length).getValues();
+      for (var j = 0; j < helferValues.length; j++) {
+        if (anlassIds.indexOf(String(helferValues[j][1] || '')) !== -1) {
+          helferToMove.push(helferValues[j]);
+          helferRowsToDelete.push(j + 2);
+        }
+      }
+    }
+
+    // --- Copy phase (idempotent on retry) ---
+    var anlassArchive = ss.getSheetByName(anlassArchiveName);
+    var helferArchive = ss.getSheetByName(helferArchiveName);
+    var freshAnlassArchive = false;
+    var freshHelferArchive = false;
+    if (!anlassArchive) {
+      anlassArchive = ss.insertSheet(anlassArchiveName);
+      anlassArchive.getRange(1, 1, 1, ANLASS_HEADERS.length).setValues([ANLASS_HEADERS]);
+      anlassArchive.getRange(1, 1, 1, ANLASS_HEADERS.length)
+        .setBackground('#475569').setFontColor('white').setFontWeight('bold');
+      anlassArchive.setFrozenRows(1);
+      freshAnlassArchive = true;
+    }
+    if (!helferArchive) {
+      helferArchive = ss.insertSheet(helferArchiveName);
+      helferArchive.getRange(1, 1, 1, ANMELDUNG_HEADERS.length).setValues([ANMELDUNG_HEADERS]);
+      helferArchive.getRange(1, 1, 1, ANMELDUNG_HEADERS.length)
+        .setBackground('#475569').setFontColor('white').setFontWeight('bold');
+      helferArchive.setFrozenRows(1);
+      freshHelferArchive = true;
+    }
+
+    if (anlassToMove.length) {
+      var startRow = anlassArchive.getLastRow() + 1;
+      anlassArchive.getRange(startRow, 1, anlassToMove.length, ANLASS_HEADERS.length).setValues(anlassToMove);
+    }
+    if (helferToMove.length) {
+      var startRow2 = helferArchive.getLastRow() + 1;
+      helferArchive.getRange(startRow2, 1, helferToMove.length, ANMELDUNG_HEADERS.length).setValues(helferToMove);
+    }
+
+    // --- Delete phase (bottom-up to keep indices valid) ---
+    helferRowsToDelete.sort(function(a, b) { return b - a; });
+    for (var k = 0; k < helferRowsToDelete.length; k++) helferSheet.deleteRow(helferRowsToDelete[k]);
+    anlassRowsToDelete.sort(function(a, b) { return b - a; });
+    for (var l = 0; l < anlassRowsToDelete.length; l++) anlassSheet.deleteRow(anlassRowsToDelete[l]);
+
+    // --- Protect archive sheets (warning-only so admins can fix typos
+    // without needing to re-run anything; full protection would block
+    // even the script owner without re-acknowledgement). ---
+    if (freshAnlassArchive) protectArchiveSheet(anlassArchive, jahr);
+    if (freshHelferArchive) protectArchiveSheet(helferArchive, jahr);
+
+    logAudit('SCHULJAHR_ARCHIVIERT', {
+      jahr: jahr,
+      anlaesse: anlassToMove.length,
+      anmeldungen: helferToMove.length
+    }, true, null);
+
+    return {
+      success: true,
+      message: 'Schuljahr ' + jahr + ' archiviert: ' +
+               anlassToMove.length + ' Anlass/Anlässe, ' +
+               helferToMove.length + ' Anmeldungen.\n\n' +
+               'Tabs: "' + anlassArchiveName + '" und "' + helferArchiveName + '".'
+    };
+  } catch (e) {
+    logAudit('SCHULJAHR_ARCHIVIERT', { jahr: jahr }, false, String(e));
+    return { success: false, message: String(e) };
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+function protectArchiveSheet(sheet, jahr) {
+  var existing = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+  for (var i = 0; i < existing.length; i++) existing[i].remove();
+  var p = sheet.protect()
+    .setDescription('Archiv ' + jahr + ' – schreibgeschützt');
+  p.setWarningOnly(true);
+}
+
+// =============================================================
+// === Integrity check (PR 2) ==================================
+// =============================================================
+//
+// Surfaces every condition that can silently break the public site:
+// duplicate event IDs, orphan registrations, formula errors, events
+// in the live sheet that should have been archived, etc. Reports
+// counts and row references; never auto-fixes. Human judgment owns
+// the corrections.
+
+function integritaetspruefung() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var anlassSheet = ss.getSheetByName('Anlässe');
+  var helferSheet = ss.getSheetByName('Anmeldungen');
+  if (!anlassSheet || !helferSheet) {
+    ui.alert('Tabellenblätter fehlen.');
+    return;
+  }
+
+  var report = [];
+  var anlassLast = anlassSheet.getLastRow();
+  var anlassData = anlassLast >= 2
+    ? anlassSheet.getRange(2, 1, anlassLast - 1, ANLASS_HEADERS.length).getValues()
+    : [];
+
+  // 1. Duplicate IDs in live Anlässe.
+  var idSeen = {};
+  var duplicateIds = [];
+  for (var i = 0; i < anlassData.length; i++) {
+    var id = String(anlassData[i][0] || '').trim();
+    if (!id) continue;
+    if (idSeen[id]) duplicateIds.push({ id: id, row: i + 2 });
+    else idSeen[id] = true;
+  }
+  if (duplicateIds.length) {
+    report.push('⚠️  Doppelte IDs (' + duplicateIds.length + '): ' +
+      duplicateIds.map(function(d) { return d.id + ' (Zeile ' + d.row + ')'; }).join(', '));
+  }
+
+  // 2. Invalid dates.
+  var invalidDates = [];
+  for (var j = 0; j < anlassData.length; j++) {
+    if (!anlassData[j][0]) continue;
+    if (!parseDate(anlassData[j][2])) invalidDates.push(j + 2);
+  }
+  if (invalidDates.length) {
+    report.push('⚠️  Ungültiges Datum in Zeilen: ' + invalidDates.join(', '));
+  }
+
+  // 3. Past events still active (date older than 60 days, status still 'aktiv').
+  var cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60); cutoff.setHours(0, 0, 0, 0);
+  var oldActive = [];
+  for (var k = 0; k < anlassData.length; k++) {
+    if (!anlassData[k][0]) continue;
+    var d = parseDate(anlassData[k][2]);
+    if (!d || d >= cutoff) continue;
+    var status = String(anlassData[k][7] || 'aktiv').trim().toLowerCase();
+    if (status === 'aktiv') oldActive.push({ id: anlassData[k][0], row: k + 2 });
+  }
+  if (oldActive.length) {
+    report.push('ℹ️  ' + oldActive.length + ' alte Anlässe (>60 Tage) noch mit Status "aktiv". ' +
+      'Erwägen Sie "Schuljahr archivieren…".');
+  }
+
+  // 4. Missing Status / Schuljahr (un-migrated rows).
+  var missingStatus = 0, missingJahr = 0;
+  for (var m = 0; m < anlassData.length; m++) {
+    if (!anlassData[m][0]) continue;
+    if (!String(anlassData[m][7] || '').trim()) missingStatus++;
+    if (!String(anlassData[m][8] || '').trim()) missingJahr++;
+  }
+  if (missingStatus) report.push('ℹ️  ' + missingStatus + ' Anlass-Zeile(n) ohne Status (führen Sie "Setup verstärken" aus).');
+  if (missingJahr)   report.push('ℹ️  ' + missingJahr + ' Anlass-Zeile(n) ohne Schuljahr (führen Sie "Setup verstärken" aus).');
+
+  // 5. Formula errors in the Angemeldete column.
+  var formulaErrors = [];
+  if (anlassData.length) {
+    var fValues = anlassSheet.getRange(2, 6, anlassData.length, 1).getDisplayValues();
+    for (var n = 0; n < fValues.length; n++) {
+      var v = String(fValues[n][0] || '');
+      if (v.charAt(0) === '#') formulaErrors.push(n + 2);
+    }
+  }
+  if (formulaErrors.length) {
+    report.push('⚠️  Formel-Fehler in Angemeldete-Spalte (Zeilen ' + formulaErrors.join(', ') + '). "Setup verstärken" stellt die Formel wieder her.');
+  }
+
+  // 6. Orphan registrations: Anlass-ID present in Anmeldungen but not in any Anlässe sheet (live or archive).
+  var helferLast = helferSheet.getLastRow();
+  if (helferLast >= 2) {
+    var allKnownIds = {};
+    ss.getSheets().forEach(function(s) {
+      var name = s.getName();
+      if (name !== 'Anlässe' && name.indexOf('Archiv Anlässe') !== 0) return;
+      var sLast = s.getLastRow();
+      if (sLast < 2) return;
+      s.getRange(2, 1, sLast - 1, 1).getValues().forEach(function(r) {
+        if (r[0]) allKnownIds[String(r[0])] = true;
+      });
+    });
+    var helferIds = helferSheet.getRange(2, 2, helferLast - 1, 1).getValues();
+    var orphans = [];
+    for (var p = 0; p < helferIds.length; p++) {
+      var hid = String(helferIds[p][0] || '').trim();
+      if (hid && !allKnownIds[hid]) orphans.push({ id: hid, row: p + 2 });
+    }
+    if (orphans.length) {
+      report.push('⚠️  Verwaiste Anmeldungen (' + orphans.length + '): IDs ' +
+        orphans.slice(0, 5).map(function(o) { return o.id + ' (Z. ' + o.row + ')'; }).join(', ') +
+        (orphans.length > 5 ? '…' : ''));
+    }
+  }
+
+  // 7. Anmeldungen Status-Spalte (G) leer.
+  if (helferLast >= 2) {
+    var hStatus = helferSheet.getRange(2, 7, helferLast - 1, 1).getValues();
+    var emptyStatus = 0;
+    for (var q = 0; q < hStatus.length; q++) {
+      if (!String(hStatus[q][0] || '').trim()) emptyStatus++;
+    }
+    if (emptyStatus) {
+      report.push('ℹ️  ' + emptyStatus + ' Anmeldung(en) ohne Status. "Setup verstärken" füllt "aktiv" nach.');
+    }
+  }
+
+  logAudit('INTEGRITAETSPRUEFUNG', { findings: report.length }, true, null);
+
+  if (report.length === 0) {
+    ui.alert('✅ Datenprüfung', 'Alles sauber. Keine Auffälligkeiten gefunden.', ui.ButtonSet.OK);
+  } else {
+    ui.alert('🔍 Datenprüfung – ' + report.length + ' Befund(e)', report.join('\n\n'), ui.ButtonSet.OK);
+  }
+}
+
 
