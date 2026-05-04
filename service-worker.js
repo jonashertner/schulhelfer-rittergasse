@@ -3,7 +3,7 @@
  * Provides offline support and caching for better performance
  */
 
-const CACHE_NAME = 'schulhelfer-v11';
+const CACHE_NAME = 'schulhelfer-v12';
 
 // Resolve asset URLs relative to the service worker's own location so
 // they work regardless of deployment subpath (e.g. GitHub Pages project
@@ -64,6 +64,14 @@ self.addEventListener('fetch', (event) => {
   // Skip API requests (Google Apps Script) - always fetch from network
   if (url.hostname.includes('script.google.com') ||
       url.hostname.includes('googleapis.com')) {
+    return;
+  }
+
+  // Skip /admin/ paths entirely. The admin UI is small, online-only,
+  // and changes more often than the public site. Caching it would
+  // strand teachers on a stale UI after a deploy, with no obvious way
+  // to refresh.
+  if (url.pathname.indexOf('/admin/') !== -1) {
     return;
   }
 

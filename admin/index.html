@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e3a5f">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Admin · Schulhelfer Rittergasse</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Reuse the public-site design tokens (palette, typography, spacing). -->
+  <link rel="stylesheet" href="../css/styles.css">
+  <link rel="stylesheet" href="admin.css">
+
+  <!-- Prevent flash of wrong theme. -->
+  <script>
+    (function(){var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');if(t==='dark')document.documentElement.setAttribute('data-theme','dark')})();
+  </script>
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body class="admin-body">
+
+  <!-- ============================ Login ============================ -->
+  <section id="login-view" class="admin-login" hidden>
+    <div class="login-card">
+      <div class="login-icon" aria-hidden="true">🛡️</div>
+      <h1>Admin-Anmeldung</h1>
+      <p class="login-sub">Schulhelfer · Primarstufe Rittergasse Basel</p>
+      <form id="login-form" autocomplete="off">
+        <label for="login-key">Admin-Schlüssel</label>
+        <input type="password" id="login-key" autocomplete="current-password" autocapitalize="off" required>
+        <button type="submit" class="btn btn-primary" id="login-btn">
+          <span class="btn-label">Anmelden</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+      </form>
+      <p id="login-error" class="error-msg" hidden></p>
+      <p class="login-help">
+        Den Schlüssel haben Sie als Schulleitung bzw. Lehrperson erhalten.
+        Er wird im Browser gespeichert.
+      </p>
+      <p class="login-back"><a href="../">← Zurück zur öffentlichen Seite</a></p>
+    </div>
+  </section>
+
+  <!-- ============================ Dashboard ============================ -->
+  <section id="dashboard-view" class="admin-dashboard" hidden>
+    <header class="admin-header">
+      <div class="admin-header-row">
+        <div class="admin-title-block">
+          <span class="admin-icon" aria-hidden="true">🛡️</span>
+          <div>
+            <h1 class="admin-title">Schulhelfer · Admin</h1>
+            <p class="admin-subtitle">Primarstufe Rittergasse Basel</p>
+          </div>
+        </div>
+        <nav class="admin-nav">
+          <a href="../" class="btn btn-ghost">→ öffentliche Seite</a>
+          <button type="button" class="btn btn-ghost" id="logout-btn">Abmelden</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <div class="admin-toolbar">
+        <button type="button" class="btn btn-primary" id="new-event-btn">+ Neuer Anlass</button>
+        <button type="button" class="btn btn-secondary" id="refresh-btn" aria-label="Liste aktualisieren">↻</button>
+      </div>
+
+      <div id="loading-banner" class="admin-banner admin-banner--info" hidden>Wird geladen…</div>
+      <div id="error-banner" class="admin-banner admin-banner--error" hidden></div>
+      <div id="success-banner" class="admin-banner admin-banner--success" hidden></div>
+
+      <section class="admin-section">
+        <div class="admin-section-head">
+          <h2>Kommende Anlässe</h2>
+          <span id="count-upcoming" class="admin-count">0</span>
+        </div>
+        <div id="upcoming-list" class="admin-event-list"></div>
+        <p id="upcoming-empty" class="admin-empty" hidden>Keine kommenden Anlässe.</p>
+      </section>
+
+      <section class="admin-section">
+        <div class="admin-section-head">
+          <h2>Abgesagte Anlässe</h2>
+          <span id="count-cancelled" class="admin-count">0</span>
+        </div>
+        <div id="cancelled-list" class="admin-event-list"></div>
+        <p id="cancelled-empty" class="admin-empty" hidden>Keine abgesagten Anlässe.</p>
+      </section>
+
+      <section class="admin-section">
+        <div class="admin-section-head">
+          <h2>Vergangene Anlässe</h2>
+          <span id="count-past" class="admin-count">0</span>
+        </div>
+        <div id="past-list" class="admin-event-list"></div>
+        <p id="past-empty" class="admin-empty" hidden>Keine vergangenen Anlässe.</p>
+      </section>
+    </main>
+  </section>
+
+  <!-- ============================ Event modal ============================ -->
+  <div id="event-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="event-modal-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content">
+      <header class="modal-head">
+        <h2 id="event-modal-title">Neuer Anlass</h2>
+        <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
+      </header>
+      <form id="event-form" novalidate>
+        <input type="hidden" id="event-id">
+        <div class="form-row">
+          <label for="event-name">Name <span class="req" aria-hidden="true">*</span></label>
+          <input type="text" id="event-name" required maxlength="120" placeholder="z.B. Sporttag Mittelstufe">
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label for="event-date">Datum <span class="req" aria-hidden="true">*</span></label>
+            <input type="date" id="event-date" required>
+          </div>
+          <div class="form-row">
+            <label for="event-helfer">Benötigte Helfer <span class="req" aria-hidden="true">*</span></label>
+            <input type="number" id="event-helfer" min="1" required placeholder="z.B. 8">
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="event-time">Zeit <span class="hint">(optional)</span></label>
+          <input type="text" id="event-time" placeholder="z.B. 14:00-18:00 oder &laquo;ab 16:00&raquo;">
+        </div>
+        <div class="form-row">
+          <label for="event-desc">Beschreibung <span class="hint">(optional)</span></label>
+          <textarea id="event-desc" rows="3" maxlength="500" placeholder="Was sollen die Helfer tun?"></textarea>
+        </div>
+        <p id="event-form-error" class="error-msg" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn-secondary" data-close>Abbrechen</button>
+          <button type="submit" class="btn btn-primary" id="event-save-btn">
+            <span class="btn-label">Speichern</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </footer>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================ Confirm modal ============================ -->
+  <div id="confirm-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content modal-content--small">
+      <header class="modal-head">
+        <h2 id="confirm-title">Bestätigen</h2>
+        <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
+      </header>
+      <div class="modal-body">
+        <p id="confirm-text"></p>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close>Abbrechen</button>
+        <button type="button" class="btn btn-danger" id="confirm-ok-btn">Absagen</button>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    const CONFIG = {
+      API_URL: 'https://script.google.com/macros/s/AKfycbzeyNTd8C1rmas-Nk5sF--Aa2Ck6ugw-wd6ts2slxpaVV8M9JzmKZW7GzipXYRsDbEf/exec'
+    };
+  </script>
+  <script src="admin.js"></script>
+</body>
+</html>
