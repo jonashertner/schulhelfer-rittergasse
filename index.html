@@ -160,7 +160,13 @@
             
             <form id="registration-form" class="registration-form" novalidate>
               <input type="hidden" id="event-id" name="eventId">
-              
+
+              <!-- Honeypot (hidden from humans, catches bots) -->
+              <div class="form-group" aria-hidden="true" style="position:absolute;left:-9999px;height:0;overflow:hidden;tab-index:-1">
+                <label for="website">Website</label>
+                <input type="text" id="website" name="website" autocomplete="off" tabindex="-1">
+              </div>
+
               <!-- Name -->
               <div class="form-group">
                 <label for="name" class="form-label">
@@ -267,6 +273,8 @@
             Nach oben
           </a>
           <span class="footer-separator" aria-hidden="true">•</span>
+          <button type="button" class="privacy-link" id="privacy-link" aria-haspopup="dialog">Datenschutz</button>
+          <span class="footer-separator" aria-hidden="true">•</span>
           <a href="#" id="spreadsheet-link" class="spreadsheet-link" target="_blank" rel="noopener noreferrer" style="display: none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -290,16 +298,21 @@
       SPREADSHEET_URL: 'https://docs.google.com/spreadsheets/d/1j844wKN_NrXyPSVyf1iuNfxydpGdUCOzQg9HQn549Qg/edit?usp=sharing'
     };
 
-    // Register service worker for offline support
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./service-worker.js')
-          .then((registration) => {
-            console.log('ServiceWorker registered:', registration.scope);
+          .then((reg) => {
+            reg.addEventListener('updatefound', () => {
+              const nw = reg.installing;
+              if (!nw) return;
+              nw.addEventListener('statechange', () => {
+                if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                  nw.postMessage('skipWaiting');
+                }
+              });
+            });
           })
-          .catch((error) => {
-            console.log('ServiceWorker registration failed:', error);
-          });
+          .catch((e) => console.log('SW registration failed:', e));
       });
     }
   </script>
@@ -369,10 +382,40 @@
     })();
   </script>
   
+  <!-- Privacy dialog -->
+  <dialog id="privacy-dialog" class="privacy-dialog" aria-labelledby="privacy-title">
+    <div class="privacy-card">
+      <button type="button" class="install-close" aria-label="Schliessen" onclick="document.getElementById('privacy-dialog').close()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+      <h2 id="privacy-title" class="install-title">Datenschutz</h2>
+      <div class="privacy-body">
+        <p><strong>Verantwortlich:</strong> Primarstufe Rittergasse, Basel</p>
+        <p><strong>Zweck:</strong> Organisation von Schulanlässen – Koordination freiwilliger Helfer:innen.</p>
+        <p><strong>Erhobene Daten:</strong> Name, E-Mail-Adresse, Telefonnummer (optional).</p>
+        <p><strong>Speicherung:</strong> Ihre Daten werden in einem geschützten Google Sheet gespeichert, auf das nur die Schulleitung Zugriff hat.</p>
+        <p><strong>Aufbewahrung:</strong> Die Daten werden nach Durchführung des Anlasses innerhalb weniger Monate gelöscht.</p>
+        <p><strong>Weitergabe:</strong> Keine Weitergabe an Dritte. Die Daten werden ausschliesslich für die Organisation des jeweiligen Anlasses verwendet.</p>
+        <p><strong>Lokale Speicherung:</strong> Zur Benutzerfreundlichkeit speichert Ihr Browser Formulardaten und Einstellungen lokal (localStorage). Diese können Sie jederzeit über die Browser-Einstellungen löschen.</p>
+        <p><strong>Auskunft &amp; Löschung:</strong> Wenden Sie sich an die Schulleitung, um Auskunft über Ihre Daten zu erhalten oder deren Löschung zu verlangen.</p>
+      </div>
+      <div class="install-actions">
+        <button type="button" class="install-action install-action--primary" onclick="document.getElementById('privacy-dialog').close()">Verstanden</button>
+      </div>
+    </div>
+  </dialog>
+  <script>
+    document.getElementById('privacy-link').addEventListener('click', function() {
+      document.getElementById('privacy-dialog').showModal();
+    });
+  </script>
+
   <!-- Install-to-Home-Screen dialog (content populated by script based on browser context) -->
-  <div id="install-dialog" class="install-dialog" role="dialog" aria-modal="true" aria-labelledby="install-title" hidden>
-    <div class="install-backdrop" data-close></div>
-    <div class="install-card" role="document">
+  <dialog id="install-dialog" class="install-dialog" aria-labelledby="install-title">
+    <div class="install-card">
       <button type="button" class="install-close" aria-label="Schliessen" data-close>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -384,7 +427,7 @@
       <div id="install-body" class="install-body"></div>
       <div id="install-actions" class="install-actions"></div>
     </div>
-  </div>
+  </dialog>
 
   <!-- Auto-prompt banner (shown on return visits only) -->
   <div id="install-banner" class="install-banner" role="region" aria-label="Zum Startbildschirm hinzufügen" hidden>
@@ -451,27 +494,18 @@
       const svgHome   = '<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
       const svgBrowser= '<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor"/><circle cx="8.8" cy="6.5" r="0.6" fill="currentColor"/><circle cx="11.1" cy="6.5" r="0.6" fill="currentColor"/></svg>';
 
-      // --- Dialog ----------------------------------------------------------
-      let lastFocus = null;
+      // --- Dialog (native <dialog>) ----------------------------------------
       function openDialog(ctx){
         renderDialog(ctx);
-        lastFocus = document.activeElement;
-        dlg.hidden = false;
-        document.body.style.overflow = 'hidden';
-        const c = dlg.querySelector('.install-close');
-        if (c) c.focus();
+        dlg.showModal();
       }
       function closeDialog(){
-        dlg.hidden = true;
-        document.body.style.overflow = '';
-        if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+        dlg.close();
       }
       dlg.addEventListener('click', (e) => {
         const t = e.target;
         if (t && t.closest && t.closest('[data-close]')) closeDialog();
-      });
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !dlg.hidden) closeDialog();
+        if (t === dlg) closeDialog();
       });
 
       async function copyLink(){
