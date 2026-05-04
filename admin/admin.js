@@ -32,7 +32,9 @@
 
   const State = {
     events: [],
-    editingEventId: null
+    editingEventId: null,
+    helpersEvent: null,         // event currently displayed in the helpers modal
+    helpersList: []              // last-loaded registrations for that event
   };
 
   // ============================================================
@@ -62,14 +64,25 @@
     $('#refresh-btn').addEventListener('click', () => refreshEvents());
     $('#event-form').addEventListener('submit', handleEventSubmit);
 
-    $$('#event-modal [data-close]').forEach(el => el.addEventListener('click', () => closeModal('event-modal')));
-    $$('#confirm-modal [data-close]').forEach(el => el.addEventListener('click', () => closeModal('confirm-modal')));
+    // PR 4 additions
+    if (CONFIG.SPREADSHEET_URL) $('#sheet-link').href = CONFIG.SPREADSHEET_URL;
+    $('#integrity-btn').addEventListener('click', openIntegrity);
+    $('#archive-btn').addEventListener('click', openArchive);
+    $('#archive-confirm').addEventListener('change', (e) => { $('#archive-go-btn').disabled = !e.target.checked; });
+    $('#archive-go-btn').addEventListener('click', handleArchiveSubmit);
+    $('#manual-form').addEventListener('submit', handleManualSubmit);
+    $('#helpers-mailto-btn').addEventListener('click', helpersMailto);
+    $('#helpers-add-btn').addEventListener('click', openManualForCurrent);
+
+    const allModals = ['event-modal', 'confirm-modal', 'helpers-modal', 'manual-modal', 'archive-modal', 'integrity-modal'];
+    allModals.forEach(id => {
+      $$('#' + id + ' [data-close]').forEach(el =>
+        el.addEventListener('click', () => closeModal(id))
+      );
+    });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        closeModal('event-modal');
-        closeModal('confirm-modal');
-      }
+      if (e.key === 'Escape') allModals.forEach(closeModal);
     });
   }
 
@@ -203,15 +216,21 @@
     }
 
     const actions = el('div', 'event-card-actions');
+    // The helpers button is always available – the school master needs
+    // the contact list even for past or cancelled events so they can
+    // follow up with attendees.
+    const helpersBtn = buildActionBtn(
+      '👥 Helfer (' + ev.angemeldete + ')',
+      'btn-secondary',
+      () => openHelpers(ev)
+    );
+    actions.appendChild(helpersBtn);
+
     if (ev.status !== 'abgesagt') {
       actions.appendChild(buildActionBtn('Bearbeiten', 'btn-secondary', () => openEventModal(ev)));
       if (section !== 'past') {
         actions.appendChild(buildActionBtn('Absagen', 'btn-danger', () => confirmCancel(ev)));
       }
-    } else {
-      const tag = el('span', 'admin-count');
-      tag.textContent = ev.angemeldete + ' Anmeldungen';
-      actions.appendChild(tag);
     }
 
     card.appendChild(main);
@@ -447,5 +466,298 @@
   function dateTsOf(ev) {
     const t = ev.datum ? new Date(ev.datum).getTime() : NaN;
     return isNaN(t) ? Infinity : t;
+  }
+
+  // ============================================================
+  // Helpers modal (per-event drawer)
+  // ============================================================
+  async function openHelpers(event) {
+    State.helpersEvent = event;
+    State.helpersList = [];
+    $('#helpers-title').textContent = 'Helfer · ' + event.name;
+    $('#helpers-event-meta').textContent =
+      (event.datumDisplay || '') +
+      (event.zeit ? ' · ' + event.zeit : '') +
+      ' · ' + event.angemeldete + '/' + event.maxHelfer + ' angemeldet';
+    $('#helpers-list').replaceChildren();
+    hide('#helpers-error');
+    $('#helpers-empty').hidden = true;
+    openModal('helpers-modal');
+
+    const key = localStorage.getItem(STORAGE_KEY);
+    const result = await callAdmin({ action: 'getRegistrations', eventId: event.id }, key);
+    if (!result || !result.success) {
+      show('#helpers-error', (result && result.error) || 'Helferdaten konnten nicht geladen werden.');
+      return;
+    }
+    State.helpersList = result.registrations || [];
+    renderHelpers();
+  }
+
+  function renderHelpers() {
+    const container = $('#helpers-list');
+    container.replaceChildren();
+    if (State.helpersList.length === 0) {
+      $('#helpers-empty').hidden = false;
+      return;
+    }
+    $('#helpers-empty').hidden = true;
+    State.helpersList.forEach(h => container.appendChild(buildHelperRow(h)));
+  }
+
+  function buildHelperRow(h) {
+    const row = el('div', 'helper-row');
+    if (h.status === 'storniert') row.classList.add('is-storniert');
+    if (h.status === 'nicht erschienen') row.classList.add('is-noshow');
+
+    const name = el('span', 'h-name');
+    name.textContent = h.name;
+    if (h.notizen) name.title = 'Notiz: ' + h.notizen;
+
+    const emailWrap = el('span', 'h-email');
+    if (h.email) {
+      const a = document.createElement('a');
+      a.href = 'mailto:' + h.email;
+      a.textContent = h.email;
+      emailWrap.appendChild(a);
+    } else {
+      emailWrap.textContent = '—';
+    }
+
+    const telWrap = el('span', 'h-tel');
+    if (h.telefon) {
+      const a = document.createElement('a');
+      a.href = 'tel:' + h.telefon.replace(/\s/g, '');
+      a.textContent = h.telefon;
+      telWrap.appendChild(a);
+    } else {
+      telWrap.textContent = '—';
+    }
+
+    const select = document.createElement('select');
+    ['aktiv', 'storniert', 'nicht erschienen'].forEach(s => {
+      const o = document.createElement('option');
+      o.value = s; o.textContent = s;
+      if (h.status === s) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', () => updateHelperStatus(h, select.value, select));
+
+    const noteBtn = document.createElement('button');
+    noteBtn.type = 'button';
+    noteBtn.className = 'h-noteBtn';
+    if (h.notizen) noteBtn.classList.add('has-note');
+    noteBtn.textContent = h.notizen ? '✎ Notiz' : '+ Notiz';
+    noteBtn.addEventListener('click', () => toggleNoteEditor(row, h));
+
+    row.appendChild(name);
+    row.appendChild(emailWrap);
+    row.appendChild(telWrap);
+    row.appendChild(select);
+    row.appendChild(noteBtn);
+    return row;
+  }
+
+  function toggleNoteEditor(row, h) {
+    const existing = row.querySelector('.h-note-edit');
+    if (existing) { existing.remove(); return; }
+
+    const editor = el('div', 'h-note-edit');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = h.notizen || '';
+    input.placeholder = 'Notiz (optional)';
+    input.maxLength = 500;
+    const save = el('button', 'btn btn-secondary');
+    save.type = 'button';
+    save.textContent = 'Speichern';
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      const key = localStorage.getItem(STORAGE_KEY);
+      const result = await callAdmin({
+        action: 'updateRegistration',
+        eventId: h.eventId, email: h.email,
+        notizen: input.value
+      }, key);
+      save.disabled = false;
+      if (!result || !result.success) {
+        show('#helpers-error', (result && result.error) || 'Notiz konnte nicht gespeichert werden.');
+        return;
+      }
+      h.notizen = input.value;
+      renderHelpers();
+    });
+    editor.appendChild(input);
+    editor.appendChild(save);
+    row.appendChild(editor);
+    setTimeout(() => input.focus(), 30);
+  }
+
+  async function updateHelperStatus(h, newStatus, selectEl) {
+    if (newStatus === h.status) return;
+    selectEl.disabled = true;
+    const key = localStorage.getItem(STORAGE_KEY);
+    const result = await callAdmin({
+      action: 'updateRegistration',
+      eventId: h.eventId, email: h.email,
+      status: newStatus
+    }, key);
+    selectEl.disabled = false;
+    if (!result || !result.success) {
+      show('#helpers-error', (result && result.error) || 'Status konnte nicht geändert werden.');
+      selectEl.value = h.status;
+      return;
+    }
+    h.status = newStatus;
+    renderHelpers();
+    // Refresh dashboard – capacity counts may have changed (storniert
+    // frees a slot, aktiv re-claims one).
+    refreshEvents();
+  }
+
+  function helpersMailto() {
+    const emails = State.helpersList
+      .filter(h => h.email && h.status !== 'storniert')
+      .map(h => h.email);
+    if (emails.length === 0) {
+      show('#helpers-error', 'Keine aktiven Anmeldungen mit E-Mail-Adresse.');
+      return;
+    }
+    const subject = encodeURIComponent('Schulhelfer · ' + (State.helpersEvent ? State.helpersEvent.name : ''));
+    // Use BCC so addresses stay private from each other.
+    const href = 'mailto:?bcc=' + emails.join(',') + '&subject=' + subject;
+    window.location.href = href;
+  }
+
+  function openManualForCurrent() {
+    if (!State.helpersEvent) return;
+    $('#manual-event-id').value = State.helpersEvent.id;
+    $('#manual-event-name').textContent = 'Anlass: ' + State.helpersEvent.name;
+    $('#manual-name').value = '';
+    $('#manual-email').value = '';
+    $('#manual-tel').value = '';
+    hide('#manual-error');
+    setBusy('#manual-save-btn', false);
+    openModal('manual-modal');
+    setTimeout(() => $('#manual-name').focus(), 50);
+  }
+
+  async function handleManualSubmit(e) {
+    e.preventDefault();
+    const data = {
+      action: 'addRegistration',
+      anlassId: $('#manual-event-id').value,
+      name: $('#manual-name').value.trim(),
+      email: $('#manual-email').value.trim().toLowerCase(),
+      telefon: $('#manual-tel').value.trim()
+    };
+    if (!data.name)  return show('#manual-error', 'Bitte einen Namen eingeben.');
+    if (!data.email) return show('#manual-error', 'Bitte eine E-Mail-Adresse eingeben.');
+
+    setBusy('#manual-save-btn', true);
+    hide('#manual-error');
+    const key = localStorage.getItem(STORAGE_KEY);
+    const result = await callAdmin(data, key);
+    setBusy('#manual-save-btn', false);
+
+    if (!result || !result.success) {
+      show('#manual-error', (result && (result.error || result.message)) || 'Eintrag fehlgeschlagen.');
+      return;
+    }
+    closeModal('manual-modal');
+    flashSuccess('Helfer eingetragen.');
+    // Reload the helper list and dashboard
+    if (State.helpersEvent) await openHelpers(State.helpersEvent);
+    refreshEvents();
+  }
+
+  // ============================================================
+  // Archive
+  // ============================================================
+  async function openArchive() {
+    $('#archive-confirm').checked = false;
+    $('#archive-go-btn').disabled = true;
+    setBusy('#archive-go-btn', false);
+    hide('#archive-error');
+    const select = $('#archive-year');
+    select.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.textContent = 'Wird geladen…';
+    placeholder.disabled = true; placeholder.selected = true;
+    select.appendChild(placeholder);
+    openModal('archive-modal');
+
+    const key = localStorage.getItem(STORAGE_KEY);
+    const result = await callAdmin({ action: 'availableSchuljahre' }, key);
+    select.replaceChildren();
+    if (!result || !result.success) {
+      show('#archive-error', (result && result.error) || 'Schuljahre konnten nicht geladen werden.');
+      return;
+    }
+    if (!result.years || result.years.length === 0) {
+      const opt = document.createElement('option');
+      opt.textContent = 'Keine archivierbaren Schuljahre vorhanden.';
+      opt.disabled = true; opt.selected = true;
+      select.appendChild(opt);
+      $('#archive-confirm').disabled = true;
+      return;
+    }
+    $('#archive-confirm').disabled = false;
+    result.years.forEach((y, idx) => {
+      const opt = document.createElement('option');
+      opt.value = y.jahr;
+      opt.textContent = y.jahr + ' · ' + y.events + ' Anlässe, ' + y.registrations + ' Anmeldungen';
+      // Default to the most recent past year (last in the sorted array).
+      if (idx === result.years.length - 1) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+
+  async function handleArchiveSubmit() {
+    const jahr = $('#archive-year').value;
+    if (!jahr) return;
+    setBusy('#archive-go-btn', true);
+    hide('#archive-error');
+    const key = localStorage.getItem(STORAGE_KEY);
+    const result = await callAdmin({ action: 'archiveSchuljahr', jahr: jahr }, key);
+    setBusy('#archive-go-btn', false);
+    if (!result || !result.success) {
+      show('#archive-error', (result && (result.error || result.message)) || 'Archivierung fehlgeschlagen.');
+      return;
+    }
+    closeModal('archive-modal');
+    flashSuccess(result.message || ('Schuljahr ' + jahr + ' archiviert.'));
+    refreshEvents();
+  }
+
+  // ============================================================
+  // Integrity check
+  // ============================================================
+  async function openIntegrity() {
+    $('#integrity-loading').hidden = false;
+    $('#integrity-result').replaceChildren();
+    openModal('integrity-modal');
+    const key = localStorage.getItem(STORAGE_KEY);
+    const result = await callAdmin({ action: 'integrityCheck' }, key);
+    $('#integrity-loading').hidden = true;
+    const target = $('#integrity-result');
+    if (!result || !result.success) {
+      const div = el('div', 'integrity-line is-warn');
+      div.textContent = (result && result.error) || 'Prüfung fehlgeschlagen.';
+      target.appendChild(div);
+      return;
+    }
+    if (!result.findings || result.findings.length === 0) {
+      const div = el('div', 'integrity-line is-ok');
+      div.textContent = '✅ Alles sauber. Keine Auffälligkeiten gefunden.';
+      target.appendChild(div);
+      return;
+    }
+    result.findings.forEach(line => {
+      const div = el('div', 'integrity-line');
+      if (line.indexOf('⚠') === 0) div.classList.add('is-warn');
+      div.textContent = line;
+      target.appendChild(div);
+    });
   }
 })();
