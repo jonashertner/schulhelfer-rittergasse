@@ -1089,6 +1089,10 @@ function registriereHelfer(data) {
       sheetSafe(anlassName),
       'aktiv'
     ]);
+    // Keep rows grouped by event so admins skimming the sheet see all
+    // helpers for one Anlass together. Cheap (<1s for thousands of
+    // rows), race-safe inside the existing lock.
+    sortAnmeldungenByAnlass(helferSheet);
 
   } catch (e) {
     Logger.log('registriereHelfer error: ' + e);
@@ -1391,6 +1395,7 @@ function onOpen() {
     .addItem('Neuer Anlass hinzufügen', 'neuerAnlassDialog')
     .addItem('Alle Anmeldungen anzeigen', 'zeigeAnmeldungen')
     .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
+    .addItem('Anmeldungen nach Anlass sortieren', 'sortiereAnmeldungenMenu')
     .addItem('Daten exportieren', 'exportDataAsCSV')
     .addSeparator()
     .addItem('Jahr archivieren…', 'archiviereJahrDialog')
@@ -1440,8 +1445,9 @@ function zaehlerNeuBerechnen() {
         changed++;
       }
     }
+    sortAnmeldungenByAnlass(helferSheet);
     logAudit('ZAEHLER_NEU_BERECHNET', { changed: changed }, true, null);
-    ui.alert('✅ Zähler neu berechnet.\n\n' + changed + ' Anlass-Zeile(n) aktualisiert.');
+    ui.alert('✅ Zähler neu berechnet (und Anmeldungen nach Anlass sortiert).\n\n' + changed + ' Anlass-Zeile(n) aktualisiert.');
   } catch (e) {
     logAudit('ZAEHLER_NEU_BERECHNET', {}, false, String(e));
     ui.alert('Fehler: ' + e);
@@ -1819,6 +1825,7 @@ function setupVerstaerken() {
 
     backfillAnlassDefaults(anlassSheet);
     backfillAnmeldungDefaults(helferSheet);
+    sortAnmeldungenByAnlass(helferSheet);
 
     writeAnlassFormulas(anlassSheet);
     applyAnlassValidations(anlassSheet);
@@ -1902,6 +1909,52 @@ function backfillAnlassDefaults(sheet) {
     if (values[i][10] == null) values[i][10] = '';   // Notizen
   }
   range.setValues(values);
+}
+
+/**
+ * Sort the data range of Anmeldungen by Anlass-ID then Zeitstempel.
+ * Pure ordering — no values change. Used after every registration
+ * (inside the existing lock so it's race-safe), inside
+ * setupVerstaerken / zaehlerNeuBerechnen, and from the menu entry
+ * so admins can re-sort manually after editing rows by hand.
+ *
+ * Lexicographic sort on the ID column is acceptable here because
+ * the goal is *grouping*, not numeric order: rows for the same
+ * event end up adjacent regardless. If a strict numeric sort
+ * becomes important later, it'd take a programmatic
+ * read-sort-write pass; currently not worth the complication.
+ */
+function sortAnmeldungenByAnlass(sheet) {
+  if (!sheet) return;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) return; // header + at most one row → nothing to sort
+  var lastCol = Math.max(sheet.getLastColumn(), ANMELDUNG_HEADERS.length);
+  sheet.getRange(2, 1, lastRow - 1, lastCol).sort([
+    { column: 2, ascending: true }, // Anlass-ID
+    { column: 1, ascending: true }  // Zeitstempel
+  ]);
+}
+
+/** Menu wrapper around sortAnmeldungenByAnlass with user-visible feedback. */
+function sortiereAnmeldungenMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Anmeldungen');
+  if (!sheet) {
+    ui.alert('Tabellenblatt "Anmeldungen" fehlt.');
+    return;
+  }
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(10000)) {
+      ui.alert('Server gerade ausgelastet. Bitte gleich erneut versuchen.');
+      return;
+    }
+    sortAnmeldungenByAnlass(sheet);
+    logAudit('SORTIERT_NACH_ANLASS', { rows: Math.max(sheet.getLastRow() - 1, 0) }, true, null);
+    ui.alert('✅ Anmeldungen nach Anlass-ID sortiert.');
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
 }
 
 function backfillAnmeldungDefaults(sheet) {
