@@ -92,12 +92,14 @@ function sheetSafe(value) {
  *
  * Handles:
  *   "079 123 45 67"     → "+41 79 123 45 67"
+ *   "79 123 45 67"      → "+41 79 123 45 67"   (subscriber digits only)
+ *   "61 999 00 00"      → "+41 61 999 00 00"   (subscriber digits only)
  *   "+41 79 123 45 67"  → "+41 79 123 45 67"
  *   "+41791234567"      → "+41 79 123 45 67"
  *   "0041 79 123 45 67" → "+41 79 123 45 67"
  *   "0041791234567"     → "+41 79 123 45 67"
  *   "(079) 123-45-67"   → "+41 79 123 45 67"
- *   "061 999 00 00"     → "+41 61 999 00 00"  (Swiss landline)
+ *   "061 999 00 00"     → "+41 61 999 00 00"   (Swiss landline)
  *   "+49 30 12345678"   → "+49 30 12345678"    (foreign: untouched format)
  *   ""                  → ""
  *   "Bitte anrufen"     → "Bitte anrufen"      (unparseable: untouched)
@@ -120,6 +122,15 @@ function normalizePhone(raw) {
   // Swiss national format: leading 0 with 10 digits total (0 + 9)
   if (!hasPlus && digits.charAt(0) === '0' && digits.length === 10) {
     digits = '41' + digits.slice(1);
+    hasPlus = true;
+  }
+
+  // Swiss subscriber digits without trunk prefix or country code:
+  // "79 123 45 67" or "61 999 00 00" — admins / parents commonly drop
+  // the leading 0 when typing. 9 digits, first digit non-zero → treat
+  // as Swiss subscriber digits and prepend +41.
+  if (!hasPlus && digits.length === 9 && digits.charAt(0) !== '0') {
+    digits = '41' + digits;
     hasPlus = true;
   }
 
@@ -1396,6 +1407,7 @@ function onOpen() {
     .addItem('Alle Anmeldungen anzeigen', 'zeigeAnmeldungen')
     .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
     .addItem('Anmeldungen nach Anlass sortieren', 'sortiereAnmeldungenMenu')
+    .addItem('Telefonnummern normalisieren', 'normalisiereTelefonnummernMenu')
     .addItem('Daten exportieren', 'exportDataAsCSV')
     .addSeparator()
     .addItem('Jahr archivieren…', 'archiviereJahrDialog')
@@ -1826,6 +1838,13 @@ function setupVerstaerken() {
     backfillAnlassDefaults(anlassSheet);
     backfillAnmeldungDefaults(helferSheet);
     sortAnmeldungenByAnlass(helferSheet);
+    // Sweep all live + archived phone numbers into the canonical
+    // "+41 XX XXX XX XX" form. Idempotent: rows already canonical are
+    // skipped. Logs the totals to the audit trail.
+    var phoneStats = normalisiereAlleTelefonnummern();
+    if (phoneStats.changed) {
+      logAudit('PHONES_NORMALIZED_VIA_SETUP', phoneStats, true, null);
+    }
 
     writeAnlassFormulas(anlassSheet);
     applyAnlassValidations(anlassSheet);
@@ -1955,6 +1974,104 @@ function sortiereAnmeldungenMenu() {
   } finally {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
+}
+
+/**
+ * Walk every Anmeldungen + "Archiv Anmeldungen *" sheet and rewrite
+ * every Telefon cell through normalizePhone. Idempotent: cells whose
+ * normalised form already matches the stored value are skipped, so
+ * re-running is cheap.
+ *
+ * Returns { scanned, changed } counts. Used both interactively (menu
+ * item) and as part of setupVerstaerken.
+ */
+function normalisiereAlleTelefonnummern() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var scanned = 0, changed = 0;
+  ss.getSheets().forEach(function(sheet) {
+    var name = sheet.getName();
+    if (name !== 'Anmeldungen' && name.indexOf('Archiv Anmeldungen') !== 0) return;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    // Telefon = column E (index 5).
+    var range = sheet.getRange(2, 5, lastRow - 1, 1);
+    var values = range.getValues();
+    var dirty = false;
+    var newValues = values.map(function(r) {
+      var current = r[0];
+      if (current === null || current === undefined || current === '') return r;
+      var asString = String(current);
+      scanned++;
+      var normalized = normalizePhone(asString);
+      if (normalized !== asString) {
+        dirty = true;
+        changed++;
+        return [sheetSafe(normalized)];
+      }
+      return r;
+    });
+    if (dirty) range.setValues(newValues);
+  });
+  return { scanned: scanned, changed: changed };
+}
+
+/** Menu wrapper: runs the bulk migrator with a lock and a summary alert. */
+function normalisiereTelefonnummernMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var lock = LockService.getScriptLock();
+  try {
+    if (!lock.tryLock(15000)) {
+      ui.alert('Server gerade ausgelastet. Bitte gleich erneut versuchen.');
+      return;
+    }
+    var stats = normalisiereAlleTelefonnummern();
+    logAudit('PHONES_NORMALIZED', stats, true, null);
+    ui.alert(
+      '✅ Telefonnummern normalisiert.\n\n' +
+      stats.changed + ' von ' + stats.scanned + ' Einträgen wurden ins ' +
+      'kanonische Format "+41 XX XXX XX XX" umgeschrieben.'
+    );
+  } catch (e) {
+    logAudit('PHONES_NORMALIZED', {}, false, String(e));
+    ui.alert('Fehler: ' + e);
+  } finally {
+    try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
+  }
+}
+
+/**
+ * Live autocorrect of phone numbers typed directly into Anmeldungen.
+ * Apps Script wires onEdit() automatically as a "simple trigger" — no
+ * registration needed. Filters fast (sheet name + column index check)
+ * so the cost on unrelated edits is negligible.
+ *
+ * sheetSafe() is used when writing back so the leading "+" doesn't
+ * trip Sheets' formula-parsing (which historically corrupted "+41"
+ * numbers into "#ERROR!").
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+  var sheet = e.range.getSheet();
+  var name = sheet.getName();
+  if (name !== 'Anmeldungen' && name.indexOf('Archiv Anmeldungen') !== 0) return;
+  if (e.range.getColumn() !== 5) return; // Telefon column only
+  if (e.range.getRow() < 2) return;       // skip header
+  // Multi-cell paste: e.range may span rows. Re-normalise every cell
+  // in the affected range that sits in column 5.
+  var height = e.range.getNumRows();
+  var values = e.range.getValues();
+  var changedAny = false;
+  for (var i = 0; i < height; i++) {
+    var raw = values[i][0];
+    if (raw === null || raw === undefined || raw === '') continue;
+    var asString = String(raw);
+    var normalized = normalizePhone(asString);
+    if (normalized !== asString) {
+      values[i][0] = sheetSafe(normalized);
+      changedAny = true;
+    }
+  }
+  if (changedAny) e.range.setValues(values);
 }
 
 function backfillAnmeldungDefaults(sheet) {
