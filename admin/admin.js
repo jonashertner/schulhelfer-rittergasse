@@ -710,15 +710,15 @@
     openModal('archive-modal');
 
     const key = localStorage.getItem(STORAGE_KEY);
-    const result = await callAdmin({ action: 'availableSchuljahre' }, key);
+    const result = await callAdmin({ action: 'availableJahre' }, key);
     select.replaceChildren();
     if (!result || !result.success) {
-      show('#archive-error', pickError(result, 'Schuljahre konnten nicht geladen werden.'));
+      show('#archive-error', pickError(result, 'Jahre konnten nicht geladen werden.'));
       return;
     }
     if (!result.years || result.years.length === 0) {
       const opt = document.createElement('option');
-      opt.textContent = 'Keine archivierbaren Schuljahre vorhanden.';
+      opt.textContent = 'Keine archivierbaren Jahre vorhanden.';
       opt.disabled = true; opt.selected = true;
       select.appendChild(opt);
       $('#archive-confirm').disabled = true;
@@ -741,14 +741,14 @@
     setBusy('#archive-go-btn', true);
     hide('#archive-error');
     const key = localStorage.getItem(STORAGE_KEY);
-    const result = await callAdmin({ action: 'archiveSchuljahr', jahr: jahr }, key);
+    const result = await callAdmin({ action: 'archiveJahr', jahr: jahr }, key);
     setBusy('#archive-go-btn', false);
     if (!result || !result.success) {
       show('#archive-error', pickError(result, 'Archivierung fehlgeschlagen.'));
       return;
     }
     closeModal('archive-modal');
-    flashSuccess(result.message || ('Schuljahr ' + jahr + ' archiviert.'));
+    flashSuccess(result.message || ('Jahr ' + jahr + ' archiviert.'));
     refreshEvents();
   }
 

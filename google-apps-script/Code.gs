@@ -436,9 +436,9 @@ function handleAdminPost(action, data) {
       case 'getRegistrations':    return getRegistrationsAdmin(data);
       case 'addRegistration':     return addRegistrationAdmin(data);
       case 'updateRegistration':  return updateRegistrationAdmin(data);
-      case 'archiveSchuljahr':    return archiveSchuljahrAdmin(data);
+      case 'archiveJahr':    return archiveJahrAdmin(data);
       case 'integrityCheck':      return integrityCheckAdmin();
-      case 'availableSchuljahre': return availableSchuljahreAdmin();
+      case 'availableJahre': return availableJahreAdmin();
       default:
         return { success: false, error: 'Unbekannte Aktion: ' + action };
     }
@@ -515,7 +515,7 @@ function addEventAdmin(data) {
       0, // formula written below
       sheetSafe(validation.beschreibung),
       'aktiv',
-      schuljahrFor(validation.datum),
+      jahrFor(validation.datum),
       '',
       ''
     ]);
@@ -549,14 +549,14 @@ function updateEventAdmin(data) {
     if (rowIdx === -1) return { success: false, error: 'Anlass nicht gefunden.' };
 
     // Update in-place, preserving Status, Notizen, and the formulas in
-    // F (Angemeldete) and J (Sichtbar?). Schuljahr is recomputed because
+    // F (Angemeldete) and J (Sichtbar?). Jahr is recomputed because
     // the date may have moved across the Aug-cutoff.
     sheet.getRange(rowIdx, 2).setValue(sheetSafe(validation.name));
     sheet.getRange(rowIdx, 3).setValue(validation.datum);
     sheet.getRange(rowIdx, 4).setValue(sheetSafe(validation.zeit));
     sheet.getRange(rowIdx, 5).setValue(validation.helfer);
     sheet.getRange(rowIdx, 7).setValue(sheetSafe(validation.beschreibung));
-    sheet.getRange(rowIdx, 9).setValue(schuljahrFor(validation.datum));
+    sheet.getRange(rowIdx, 9).setValue(jahrFor(validation.datum));
     // Re-assert the formulas in case the row was edited manually and
     // those cells got clobbered with values.
     sheet.getRange(rowIdx, 6).setFormula(angemeldeteFormulaForRow(rowIdx));
@@ -758,12 +758,12 @@ function updateRegistrationAdmin(data) {
   }
 }
 
-/** Wrapper around archiviereSchuljahr() for the admin POST path. */
-function archiveSchuljahrAdmin(data) {
+/** Wrapper around archiviereJahr() for the admin POST path. */
+function archiveJahrAdmin(data) {
   var jahr = String(data && data.jahr || '').trim();
-  if (!jahr) return { success: false, error: 'Schuljahr erforderlich.' };
-  var result = archiviereSchuljahr(jahr);
-  // archiviereSchuljahr returns {success, message} — admin UI expects
+  if (!jahr) return { success: false, error: 'Jahr erforderlich.' };
+  var result = archiviereJahr(jahr);
+  // archiviereJahr returns {success, message} — admin UI expects
   // {success, error|message}. Normalise.
   if (result.success) return result;
   return { success: false, error: result.message || 'Archiv fehlgeschlagen.' };
@@ -782,15 +782,15 @@ function integrityCheckAdmin() {
  * { jahr, events, registrations }. Only past years are returned —
  * the current year cannot be archived.
  */
-function availableSchuljahreAdmin() {
+function availableJahreAdmin() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var anlassSheet = ss.getSheetByName('Anlässe');
   if (!anlassSheet) return { success: true, years: [] };
-  var current = schuljahrFor(new Date());
-  var jahre = availableSchuljahre(anlassSheet)
+  var current = jahrFor(new Date());
+  var jahre = availableJahre(anlassSheet)
     .filter(function(y) { return y && y !== current; });
   var enriched = jahre.map(function(j) {
-    var stats = schuljahrStats(j);
+    var stats = jahrStats(j);
     return { jahr: j, events: stats.events, registrations: stats.registrations };
   });
   return { success: true, years: enriched, currentYear: current };
@@ -1365,7 +1365,7 @@ function onOpen() {
     .addItem('Zähler neu berechnen', 'zaehlerNeuBerechnen')
     .addItem('Daten exportieren', 'exportDataAsCSV')
     .addSeparator()
-    .addItem('Schuljahr archivieren…', 'archiviereSchuljahrDialog')
+    .addItem('Jahr archivieren…', 'archiviereJahrDialog')
     .addItem('Daten prüfen', 'integritaetspruefung')
     .addSeparator()
     .addItem('Alte Anlässe bereinigen', 'alteAnlaesseBereinigen')
@@ -1627,7 +1627,7 @@ function anlassHinzufuegen(data) {
   try {
     lock.waitLock(10000);
     var newId = nextAnlassId();
-    // Status="aktiv" by default; Schuljahr is derived. The COUNTIFS
+    // Status="aktiv" by default; Jahr is derived. The COUNTIFS
     // formula for the Angemeldete column is set in a follow-up
     // setFormula() call because the formula needs the row index, which
     // we only know after the append.
@@ -1640,7 +1640,7 @@ function anlassHinzufuegen(data) {
       0, // Angemeldete – overwritten with formula immediately below
       sheetSafe(beschreibung),
       'aktiv',
-      schuljahrFor(datum),
+      jahrFor(datum),
       '', // Sichtbar? – formula written by setupVerstaerken/refresh
       ''  // Notizen
     ]);
@@ -1664,7 +1664,7 @@ function anlassHinzufuegen(data) {
 
 var ANLASS_HEADERS = [
   'ID', 'Name', 'Datum', 'Zeit', 'Benötigte Helfer', 'Angemeldete',
-  'Beschreibung', 'Status', 'Schuljahr', 'Sichtbar?', 'Notizen (intern)'
+  'Beschreibung', 'Status', 'Jahr', 'Sichtbar?', 'Notizen (intern)'
 ];
 var ANMELDUNG_HEADERS = [
   'Zeitstempel', 'Anlass-ID', 'Name', 'E-Mail', 'Telefon', 'Anlass',
@@ -1674,16 +1674,14 @@ var ANLASS_STATUS_VALUES = ['aktiv', 'abgesagt', 'archiviert'];
 var ANMELDUNG_STATUS_VALUES = ['aktiv', 'storniert', 'nicht erschienen'];
 
 /**
- * School year for a given date, "YYYY/YY". Swiss school year runs
- * August → July, so August 2025 belongs to 2025/26 and June 2026 still
- * belongs to 2025/26.
+ * Calendar year as a 4-digit string, "YYYY". Returns '' for invalid
+ * dates. The school explicitly chose calendar-year archival over
+ * Swiss-school-year (Aug→Jul) so that year boundaries are
+ * unambiguous and auto-archive can fire on Jan 1.
  */
-function schuljahrFor(date) {
+function jahrFor(date) {
   if (!(date instanceof Date) || isNaN(date.getTime())) return '';
-  var y = date.getFullYear();
-  var startYear = date.getMonth() >= 7 ? y : y - 1;
-  var endShort = ('0' + ((startYear + 1) % 100)).slice(-2);
-  return startYear + '/' + endShort;
+  return String(date.getFullYear());
 }
 
 /**
@@ -1785,14 +1783,29 @@ function setupVerstaerken() {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
 
+  // Install the daily auto-archive trigger outside the lock (the
+  // ScriptApp.newTrigger call hits Google's trigger service, no
+  // sheet contention). Best-effort: if the user denies the
+  // additional auth, surface it but don't undo the rest of setup.
+  var triggerStatus = '';
+  try {
+    installiereAutoArchiv();
+    triggerStatus = '\n• Auto-Archiv aktiv: täglich um 03:00 werden Anlässe abgeschlossener Kalenderjahre automatisch archiviert.';
+  } catch (e) {
+    logAudit('AUTO_ARCHIVE_INSTALL_FAIL', {}, false, String(e));
+    triggerStatus = '\n⚠️  Auto-Archiv konnte nicht installiert werden: ' + e +
+                    '\n   (Sie können es später über das Menü manuell auslösen.)';
+  }
+
   ui.alert(
     '✅ Setup verstärkt.\n\n' +
-    '• Spalten "Status", "Schuljahr", "Sichtbar?", "Notizen" auf Anlässe.\n' +
+    '• Spalten "Status", "Jahr", "Sichtbar?", "Notizen" auf Anlässe.\n' +
     '• Spalten "Status", "Notizen" auf Anmeldungen.\n' +
     '• "Angemeldete" wird jetzt automatisch berechnet (COUNTIFS-Formel).\n' +
     '• Datum, Pflichtfelder und Status werden in Echtzeit validiert.\n' +
     '• Volle/abgesagte/vergangene Anlässe werden farblich markiert.\n' +
-    '• Tab "Anleitung" gibt eine Schritt-für-Schritt-Hilfe.\n\n' +
+    '• Tab "Anleitung" gibt eine Schritt-für-Schritt-Hilfe.' +
+    triggerStatus + '\n\n' +
     'Die Aktion ist idempotent – Sie können sie jederzeit erneut ausführen.'
   );
 }
@@ -1814,7 +1827,7 @@ function ensureHeaders(sheet, headers, bg) {
 }
 
 /**
- * Back-fill Anlässe defaults: Status=aktiv, Schuljahr from Datum,
+ * Back-fill Anlässe defaults: Status=aktiv, Jahr from Datum,
  * Notizen blank. Existing values are preserved – we only fill blanks.
  */
 function backfillAnlassDefaults(sheet) {
@@ -1825,9 +1838,9 @@ function backfillAnlassDefaults(sheet) {
   for (var i = 0; i < values.length; i++) {
     if (!values[i][0]) continue; // skip blank rows
     if (!values[i][7]) values[i][7] = 'aktiv';      // Status
-    if (!values[i][8]) {                              // Schuljahr
+    if (!values[i][8]) {                              // Jahr
       var d = parseDate(values[i][2]);
-      if (d) values[i][8] = schuljahrFor(d);
+      if (d) values[i][8] = jahrFor(d);
     }
     if (values[i][10] == null) values[i][10] = '';   // Notizen
   }
@@ -1987,7 +2000,7 @@ function ensureAnleitungSheet(ss) {
     ['  Angemeldete       AUTOMATISCH (Formel) – nicht überschreiben.'],
     ['  Beschreibung      Was sollen die Helfer tun?'],
     ['  Status            aktiv (öffentlich) / abgesagt / archiviert.'],
-    ['  Schuljahr         AUTOMATISCH aus dem Datum (z.B. "2025/26").'],
+    ['  Jahr              AUTOMATISCH aus dem Datum (Kalenderjahr, z.B. "2025").'],
     ['  Sichtbar?         AUTOMATISCH – zeigt, warum ein Anlass evtl. ausgeblendet ist.'],
     ['  Notizen (intern)  Nur intern, wird nicht öffentlich angezeigt.'],
     [''],
@@ -1999,13 +2012,18 @@ function ensureAnleitungSheet(ss) {
     ['  Status "storniert" für abgemeldete Helfer (Slot wird wieder frei).'],
     ['  Status "nicht erschienen" für Nachverfolgung nach dem Anlass.'],
     [''],
+    ['ARCHIVIERUNG'],
+    ['  Anlässe abgeschlossener Kalenderjahre (Jahr < aktuelles Jahr) werden täglich'],
+    ['  automatisch um 03:00 in eigene "Archiv …"-Tabs verschoben (schreibgeschützt).'],
+    ['  Manuell auslösbar über Menü → "Jahr archivieren…".'],
+    [''],
     ['BEI PROBLEMEN'],
     ['  Menü → "Setup verstärken": stellt Validierung & Formeln wieder her.'],
     ['  Menü → "Zähler neu berechnen": nur bei sehr alten Sheets nötig.']
   ];
   sheet.getRange(1, 1, lines.length, 1).setValues(lines);
   sheet.getRange(1, 1).setFontSize(18).setFontWeight('bold').setFontColor('#1e3a5f');
-  [6, 19, 23, 27].forEach(function(r) {
+  [6, 19, 23, 27, 32].forEach(function(r) {
     sheet.getRange(r, 1).setFontWeight('bold').setFontSize(12).setFontColor('#1e3a5f');
   });
   sheet.setColumnWidth(1, 760);
@@ -2032,7 +2050,7 @@ function ensureAnleitungSheet(ss) {
  * Show a dialog letting the admin pick a school year (with the most
  * recent past year as default), confirm intent, and trigger the move.
  */
-function archiviereSchuljahrDialog() {
+function archiviereJahrDialog() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Anlässe');
@@ -2041,15 +2059,15 @@ function archiviereSchuljahrDialog() {
     return;
   }
 
-  var heuteYear = schuljahrFor(new Date());
-  var available = availableSchuljahre(sheet)
+  var heuteYear = jahrFor(new Date());
+  var available = availableJahre(sheet)
     .filter(function(y) { return y && y !== heuteYear; });
 
   if (available.length === 0) {
     ui.alert(
-      'Schuljahr archivieren',
-      'Es gibt aktuell keine abgeschlossenen Schuljahre zum Archivieren.\n\n' +
-      '(Das laufende Schuljahr ' + heuteYear + ' kann nicht archiviert werden.)',
+      'Jahr archivieren',
+      'Es gibt aktuell keine abgeschlossenen Jahre zum Archivieren.\n\n' +
+      '(Das laufende Jahr ' + heuteYear + ' kann nicht archiviert werden.)',
       ui.ButtonSet.OK
     );
     return;
@@ -2057,7 +2075,7 @@ function archiviereSchuljahrDialog() {
 
   // Build the dialog HTML. Default option = most recent past year.
   var options = available.map(function(y) {
-    var stats = schuljahrStats(y);
+    var stats = jahrStats(y);
     var label = y + '  (' + stats.events + ' Anlass/Anlässe, ' + stats.registrations + ' Anmeldungen)';
     return { value: y, label: label };
   });
@@ -2078,18 +2096,18 @@ function archiviereSchuljahrDialog() {
     '  .secondary { background: #e2e8f0; color: #1e293b; }' +
     '  .summary { margin-top: 12px; padding: 10px; background: #f8fafc; border-radius: 6px; font-size: 13px; }' +
     '</style>' +
-    '<h2>Schuljahr archivieren</h2>' +
-    '<p>Anlässe und Anmeldungen des gewählten Schuljahrs werden in dedizierte Archiv-Tabs verschoben und dort schreibgeschützt.</p>' +
-    '<label>Schuljahr</label>' +
+    '<h2>Jahr archivieren</h2>' +
+    '<p>Anlässe und Anmeldungen des gewählten Jahrs werden in dedizierte Archiv-Tabs verschoben und dort schreibgeschützt.</p>' +
+    '<label>Jahr</label>' +
     '<select id="year">' +
     options.map(function(o) {
       return '<option value="' + o.value + '"' + (o.value === defaultYear ? ' selected' : '') + '>' + o.label + '</option>';
     }).join('') +
     '</select>' +
-    '<div class="summary">Die IDs der Anlässe bleiben weltweit eindeutig – auch in zukünftigen Schuljahren werden archivierte IDs nicht wiederverwendet.</div>' +
+    '<div class="summary">Die IDs der Anlässe bleiben weltweit eindeutig – auch in zukünftigen Jahren werden archivierte IDs nicht wiederverwendet.</div>' +
     '<div class="checkbox-row">' +
     '  <input type="checkbox" id="confirm">' +
-    '  <label for="confirm" style="font-weight: normal; margin: 0;">Ich habe geprüft, dass ich für dieses Schuljahr nichts mehr ändern muss.</label>' +
+    '  <label for="confirm" style="font-weight: normal; margin: 0;">Ich habe geprüft, dass ich für dieses Jahr nichts mehr ändern muss.</label>' +
     '</div>' +
     '<div class="buttons">' +
     '  <button class="secondary" type="button" onclick="google.script.host.close()">Abbrechen</button>' +
@@ -2109,16 +2127,16 @@ function archiviereSchuljahrDialog() {
     '      .withFailureHandler(function(err){' +
     '        alert("Fehler: " + err); b.disabled = false; b.textContent = "Archivieren";' +
     '      })' +
-    '      .archiviereSchuljahr(document.getElementById("year").value);' +
+    '      .archiviereJahr(document.getElementById("year").value);' +
     '  }' +
     '</script>';
 
   var output = HtmlService.createHtmlOutput(html).setWidth(440).setHeight(360);
-  ui.showModalDialog(output, '🗂️ Schuljahr archivieren');
+  ui.showModalDialog(output, '🗂️ Jahr archivieren');
 }
 
-/** Return the unique non-empty Schuljahr values in Anlässe, sorted. */
-function availableSchuljahre(anlassSheet) {
+/** Return the unique non-empty Jahr values in Anlässe, sorted. */
+function availableJahre(anlassSheet) {
   var lastRow = anlassSheet.getLastRow();
   if (lastRow < 2) return [];
   var values = anlassSheet.getRange(2, 9, lastRow - 1, 1).getValues();
@@ -2127,7 +2145,7 @@ function availableSchuljahre(anlassSheet) {
     var v = String(values[i][0] || '').trim();
     if (v) set[v] = true;
   }
-  // For rows missing Schuljahr (un-migrated), derive from Datum.
+  // For rows missing Jahr (un-migrated), derive from Datum.
   var allValues = anlassSheet.getRange(2, 1, lastRow - 1, 9).getValues();
   for (var j = 0; j < allValues.length; j++) {
     if (!allValues[j][0]) continue;
@@ -2135,7 +2153,7 @@ function availableSchuljahre(anlassSheet) {
     if (!sj) {
       var d = parseDate(allValues[j][2]);
       if (d) {
-        var derived = schuljahrFor(d);
+        var derived = jahrFor(d);
         if (derived) set[derived] = true;
       }
     }
@@ -2144,7 +2162,7 @@ function availableSchuljahre(anlassSheet) {
 }
 
 /** Count how many events + registrations would move for a given year. */
-function schuljahrStats(jahr) {
+function jahrStats(jahr) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var anlassSheet = ss.getSheetByName('Anlässe');
   var helferSheet = ss.getSheetByName('Anmeldungen');
@@ -2164,7 +2182,7 @@ function schuljahrStats(jahr) {
 
 /**
  * Find every Anlass-ID belonging to the given school year. Uses the
- * Schuljahr column when present and falls back to deriving from Datum
+ * Jahr column when present and falls back to deriving from Datum
  * for un-migrated rows.
  */
 function collectAnlassIdsForYear(anlassSheet, jahr) {
@@ -2177,7 +2195,7 @@ function collectAnlassIdsForYear(anlassSheet, jahr) {
     var rowSj = String(values[i][8] || '').trim();
     if (!rowSj) {
       var d = parseDate(values[i][2]);
-      if (d) rowSj = schuljahrFor(d);
+      if (d) rowSj = jahrFor(d);
     }
     if (rowSj === jahr) ids.push(String(values[i][0]));
   }
@@ -2190,12 +2208,12 @@ function collectAnlassIdsForYear(anlassSheet, jahr) {
  * Returns { success, message } – the dialog displays the message via
  * an alert(). Errors are caught and surfaced with a friendly message.
  */
-function archiviereSchuljahr(jahr) {
+function archiviereJahr(jahr) {
   jahr = String(jahr || '').trim();
-  if (!jahr) return { success: false, message: 'Kein Schuljahr angegeben.' };
-  var current = schuljahrFor(new Date());
+  if (!jahr) return { success: false, message: 'Kein Jahr angegeben.' };
+  var current = jahrFor(new Date());
   if (jahr === current) {
-    return { success: false, message: 'Das laufende Schuljahr kann nicht archiviert werden.' };
+    return { success: false, message: 'Das laufende Jahr kann nicht archiviert werden.' };
   }
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2299,7 +2317,7 @@ function archiviereSchuljahr(jahr) {
 
     return {
       success: true,
-      message: 'Schuljahr ' + jahr + ' archiviert: ' +
+      message: 'Jahr ' + jahr + ' archiviert: ' +
                anlassToMove.length + ' Anlass/Anlässe, ' +
                helferToMove.length + ' Anmeldungen.\n\n' +
                'Tabs: "' + anlassArchiveName + '" und "' + helferArchiveName + '".'
@@ -2318,6 +2336,62 @@ function protectArchiveSheet(sheet, jahr) {
   var p = sheet.protect()
     .setDescription('Archiv ' + jahr + ' – schreibgeschützt');
   p.setWarningOnly(true);
+}
+
+// =============================================================
+// === Auto-archive (daily time-driven trigger) ================
+// =============================================================
+//
+// On Jan 1 the previous year's events are eligible to be archived.
+// A daily trigger runs autoArchive() at 03:00 (script timezone).
+// It scans live Anlässe for any Jahr value strictly less than the
+// current calendar year and moves each year through archiviereJahr.
+//
+// Idempotent: if no past-year rows remain, it's a no-op. Safe to
+// run repeatedly.
+//
+// installiereAutoArchiv() creates the daily trigger and is invoked
+// from setupVerstaerken so admins get auto-archive for free without
+// having to know about Apps Script triggers.
+
+var AUTO_ARCHIVE_FN = 'autoArchive';
+
+function autoArchive() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Anlässe');
+  if (!sheet) return;
+  var currentYear = new Date().getFullYear();
+  var jahre = availableJahre(sheet)
+    .filter(function(y) {
+      var n = parseInt(y, 10);
+      return !isNaN(n) && n < currentYear;
+    });
+  jahre.forEach(function(y) {
+    var result = archiviereJahr(y);
+    logAudit('AUTO_ARCHIVE', { jahr: y, success: !!result.success },
+             !!result.success, result.message);
+  });
+}
+
+/**
+ * Idempotent install of the daily auto-archive trigger. Removes any
+ * existing autoArchive triggers first so re-running doesn't pile up
+ * duplicates. Time of day is 03:00 in the script's timezone — late
+ * enough that the previous day's edits have settled, early enough
+ * that admins arriving in the morning see the result.
+ */
+function installiereAutoArchiv() {
+  var existing = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existing.length; i++) {
+    if (existing[i].getHandlerFunction() === AUTO_ARCHIVE_FN) {
+      ScriptApp.deleteTrigger(existing[i]);
+    }
+  }
+  ScriptApp.newTrigger(AUTO_ARCHIVE_FN)
+    .timeBased()
+    .atHour(3)
+    .everyDays(1)
+    .create();
 }
 
 // =============================================================
@@ -2401,10 +2475,10 @@ function buildIntegrityReport() {
   }
   if (oldActive.length) {
     report.push('ℹ️  ' + oldActive.length + ' alte Anlässe (>60 Tage) noch mit Status "aktiv". ' +
-      'Erwägen Sie "Schuljahr archivieren…".');
+      'Erwägen Sie "Jahr archivieren…".');
   }
 
-  // 4. Missing Status / Schuljahr (un-migrated rows).
+  // 4. Missing Status / Jahr (un-migrated rows).
   var missingStatus = 0, missingJahr = 0;
   for (var m = 0; m < anlassData.length; m++) {
     if (!anlassData[m][0]) continue;
@@ -2412,7 +2486,7 @@ function buildIntegrityReport() {
     if (!String(anlassData[m][8] || '').trim()) missingJahr++;
   }
   if (missingStatus) report.push('ℹ️  ' + missingStatus + ' Anlass-Zeile(n) ohne Status (führen Sie "Setup verstärken" aus).');
-  if (missingJahr)   report.push('ℹ️  ' + missingJahr + ' Anlass-Zeile(n) ohne Schuljahr (führen Sie "Setup verstärken" aus).');
+  if (missingJahr)   report.push('ℹ️  ' + missingJahr + ' Anlass-Zeile(n) ohne Jahr (führen Sie "Setup verstärken" aus).');
 
   // 5. Formula errors in the Angemeldete column.
   var formulaErrors = [];

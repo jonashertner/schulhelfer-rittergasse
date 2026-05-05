@@ -71,7 +71,7 @@
         <button type="button" class="btn btn-secondary" id="refresh-btn" aria-label="Liste aktualisieren">↻</button>
         <span class="toolbar-spacer"></span>
         <button type="button" class="btn btn-ghost" id="integrity-btn" title="Auf Datenfehler prüfen">🔍 Daten prüfen</button>
-        <button type="button" class="btn btn-ghost" id="archive-btn" title="Vergangenes Schuljahr archivieren">📂 Schuljahr archivieren</button>
+        <button type="button" class="btn btn-ghost" id="archive-btn" title="Vergangenes Jahr archivieren">📂 Jahr archivieren</button>
         <a class="btn btn-ghost" id="sheet-link" href="#" target="_blank" rel="noopener noreferrer" title="Google-Tabelle öffnen (für Fortgeschrittene)">📋 Tabelle</a>
       </div>
 
@@ -229,13 +229,13 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-content modal-content--small">
       <header class="modal-head">
-        <h2 id="archive-title">📂 Schuljahr archivieren</h2>
+        <h2 id="archive-title">📂 Jahr archivieren</h2>
         <button type="button" class="modal-close" aria-label="Schliessen" data-close>×</button>
       </header>
       <div class="modal-body">
-        <p>Anlässe und Anmeldungen des gewählten Schuljahrs werden in dedizierte Archiv-Tabs verschoben und dort schreibgeschützt. IDs bleiben global eindeutig — auch in zukünftigen Schuljahren werden archivierte IDs nicht wiederverwendet.</p>
+        <p>Anlässe und Anmeldungen des gewählten Kalenderjahrs werden in dedizierte Archiv-Tabs verschoben und dort schreibgeschützt. Hinweis: vergangene Jahre werden täglich um 03:00 automatisch archiviert; manuelles Archivieren ist nur in Sonderfällen nötig.</p>
         <div class="form-row">
-          <label for="archive-year">Schuljahr</label>
+          <label for="archive-year">Jahr</label>
           <select id="archive-year"></select>
         </div>
         <label class="checkbox-row">
