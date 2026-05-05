@@ -301,11 +301,20 @@ body {
 /* Main */
 .main {
   flex: 1;
-  padding: var(--space-10) 0 var(--space-16);
+  /* The floating .theme-toggle (bottom-right) and .admin-indicator
+     (bottom-left, when in admin mode) sit at fixed positions that
+     would otherwise hover over the right/left edge of form buttons
+     and footer text. Reserve enough bottom space so the last
+     interactive element on the page never lands under either of
+     them. 88 px = 42 px button + 24 px offset + 22 px breathing
+     room. */
+  padding: var(--space-10) 0 calc(88px + env(safe-area-inset-bottom, 0px));
 }
 
 @media (min-width: 640px) {
-  .main { padding: var(--space-12) 0 var(--space-20); }
+  .main {
+    padding: var(--space-12) 0 calc(88px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* Messages */
