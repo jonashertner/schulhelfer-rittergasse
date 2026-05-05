@@ -965,7 +965,8 @@ body {
 }
 
 .back-to-top,
-.spreadsheet-link {
+.spreadsheet-link,
+.footer-admin-link {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -979,11 +980,13 @@ body {
 }
 
 .back-to-top:hover,
-.spreadsheet-link:hover {
+.spreadsheet-link:hover,
+.footer-admin-link:hover {
   color: var(--sage);
 }
 
-.spreadsheet-link svg {
+.spreadsheet-link svg,
+.footer-admin-link svg {
   opacity: 0.6;
 }
 
