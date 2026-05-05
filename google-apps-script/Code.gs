@@ -1370,6 +1370,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Alte Anlässe bereinigen', 'alteAnlaesseBereinigen')
     .addItem('Admin-Status prüfen', 'adminKeyStatus')
+    .addItem('Script-Properties aufräumen', 'bereinigeScriptProperties')
     .addItem('Audit-Log anzeigen', 'zeigeAuditLog')
     .addToUi();
 }
@@ -1455,6 +1456,62 @@ function adminKeyStatus() {
   msg += '\n\nZum Aktivieren auf einem Gerät die Seite einmal mit ?admin=SCHLÜSSEL ' +
          'am Ende der URL öffnen. Der Schlüssel wird dann lokal gespeichert.';
   ui.alert('🔑 Admin-Status', msg, ui.ButtonSet.OK);
+}
+
+/**
+ * One-shot cleanup of leftover Script Properties from the old
+ * PropertiesService-based rate limiter. The current code uses
+ * CacheService for rate limits (auto-expires, never written to
+ * properties), but old "rate_<identifier>" entries from before
+ * v25-improvements still sit in Script Properties and now exceed the
+ * 50-row visible limit in the editor – making it impossible to find
+ * ADMIN_KEY in the UI.
+ *
+ * Deletes every property whose key starts with "rate_". Preserves
+ * ADMIN_KEY and any other manually-set property. Confirmable: shows
+ * the planned counts before doing anything.
+ */
+function bereinigeScriptProperties() {
+  var ui = SpreadsheetApp.getUi();
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var keys = Object.keys(all);
+  var rateKeys = keys.filter(function(k) { return k.indexOf('rate_') === 0; });
+  var keepKeys = keys.filter(function(k) { return k.indexOf('rate_') !== 0; });
+
+  if (rateKeys.length === 0) {
+    ui.alert('Aufräumen', 'Keine alten Rate-Limit-Einträge gefunden. Aktuell ' +
+             keys.length + ' Properties insgesamt.', ui.ButtonSet.OK);
+    return;
+  }
+
+  var resp = ui.alert(
+    'Aufräumen',
+    'Gefunden: ' + rateKeys.length + ' alte "rate_*"-Einträge ' +
+    '(verbleibende ' + keepKeys.length + ' Properties bleiben unverändert, darunter ' +
+    (keepKeys.indexOf('ADMIN_KEY') !== -1 ? 'ADMIN_KEY' : 'KEIN ADMIN_KEY') + ').\n\n' +
+    'Diese Einträge sind Reste der alten Rate-Limit-Implementierung und werden ' +
+    'nicht mehr verwendet. Jetzt löschen?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+
+  // Delete in chunks – Apps Script may not love deleting hundreds at once.
+  var deleted = 0;
+  for (var i = 0; i < rateKeys.length; i++) {
+    try {
+      props.deleteProperty(rateKeys[i]);
+      deleted++;
+    } catch (e) {
+      Logger.log('Could not delete ' + rateKeys[i] + ': ' + e);
+    }
+  }
+  logAudit('SCRIPT_PROPERTIES_CLEANED', { deleted: deleted, kept: keepKeys.length }, true, null);
+  ui.alert('✅ Aufgeräumt',
+    deleted + ' alte Einträge gelöscht.\n' +
+    keepKeys.length + ' Properties verbleiben (ADMIN_KEY ' +
+    (keepKeys.indexOf('ADMIN_KEY') !== -1 ? 'enthalten' : 'NICHT gefunden – ggf. neu setzen') + ').',
+    ui.ButtonSet.OK);
 }
 
 function zeigeAnmeldungen() {
