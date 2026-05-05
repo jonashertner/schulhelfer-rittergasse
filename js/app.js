@@ -334,6 +334,8 @@
         data-date="${eventDate ? eventDate.toISOString() : ''}"
         data-time="${eventTime ? esc(JSON.stringify(eventTime)) : ''}"
         data-description="${esc(event.beschreibung || '')}"
+        data-kontakt-name="${esc(event.kontaktName || '')}"
+        data-kontakt-email="${esc(event.kontaktEmail || '')}"
         data-voll="${voll ? '1' : '0'}"
         aria-selected="false">
         ${countdown ? `<div class="event-countdown">
@@ -369,6 +371,17 @@
           </span>
         </div>
         ${event.beschreibung ? `<p class="event-description">${esc(event.beschreibung)}</p>` : ''}
+        ${(event.kontaktName || event.kontaktEmail) ? `
+          <p class="event-contact" aria-label="Ansprechperson">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span class="event-contact-label">Kontakt:</span>
+            ${event.kontaktName ? `<span>${esc(event.kontaktName)}</span>` : ''}
+            ${event.kontaktName && event.kontaktEmail ? `<span aria-hidden="true">·</span>` : ''}
+            ${event.kontaktEmail ? `<a href="mailto:${esc(event.kontaktEmail)}">${esc(event.kontaktEmail)}</a>` : ''}
+          </p>
+        ` : ''}
         <div class="event-actions">
           ${voll ? `
           <div class="event-cta event-cta--disabled" aria-hidden="true">
@@ -653,7 +666,16 @@
       const name = eventCard.dataset.name;
       const dateStr = eventCard.dataset.date;
       const timeStr = eventCard.dataset.time;
-      const description = eventCard.dataset.description || '';
+      const baseDescription = eventCard.dataset.description || '';
+      const kontaktName = eventCard.dataset.kontaktName || '';
+      const kontaktEmail = eventCard.dataset.kontaktEmail || '';
+      // If a public contact is configured for this event, append it to
+      // the iCal DESCRIPTION so it lands in the user's calendar app
+      // alongside the event details.
+      const contactLine = (kontaktName || kontaktEmail)
+        ? '\n\nKontakt: ' + [kontaktName, kontaktEmail].filter(Boolean).join(' – ')
+        : '';
+      const description = baseDescription + contactLine;
 
       if (!name) {
         console.error('No event name found');
