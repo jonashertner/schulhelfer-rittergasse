@@ -43,6 +43,20 @@
   --warning: #c4a35a;
   --warning-bg: #f9f5eb;
 
+  /* Brand accent — sage-dark used for the install dialog / banner /
+     numbered steps. Stable across themes (the install surface is a
+     modal that reads the same way in both modes). */
+  --brand: #5a7a72;
+  --brand-hover: #4a6a62;
+  --brand-fg: #ffffff;
+
+  /* Pastel-badge text colours — paired with --sky-light / --sand-light /
+     --blush-light backgrounds. Per-mode values guarantee WCAG-AA
+     contrast in both light and dark themes. */
+  --badge-sky-text: #3a6a7a;
+  --badge-sand-text: #6a5a3a;
+  --badge-blush-text: #7a4a4a;
+
   /* Typography */
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 
@@ -128,6 +142,15 @@
   --error-bg: #261e1e;
   --warning: #d4b870;
   --warning-bg: #262318;
+
+  /* Brand stays the same across themes — it's used on modal-style
+     install surfaces that aren't part of the page elevation stack. */
+
+  /* Pastel-badge text — flipped to the lighter side of each pair so
+     it reads on the dark pastel backgrounds. */
+  --badge-sky-text: #a8c8d4;
+  --badge-sand-text: #d4c8ae;
+  --badge-blush-text: #d4b5b5;
 
   /* Adjusted shadows for dark mode */
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.15);
@@ -507,17 +530,17 @@ body {
 
 .event-badge--available {
   background: var(--sky-light);
-  color: #5a8a9a;
+  color: var(--badge-sky-text);
 }
 
 .event-badge--limited {
   background: var(--sand-light);
-  color: #9a8a5a;
+  color: var(--badge-sand-text);
 }
 
 .event-badge--last {
   background: var(--blush-light);
-  color: #a47a7a;
+  color: var(--badge-blush-text);
 }
 
 .event-badge--full {
@@ -1499,8 +1522,8 @@ a {
   height: 80px;
   margin: 0 auto var(--space-3);
   border-radius: 22px;
-  background: #1e3a5f;
-  color: #fff;
+  background: var(--brand);
+  color: var(--brand-fg);
 }
 
 [data-theme="dark"] .install-hero {
@@ -1564,8 +1587,8 @@ a {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: #1e3a5f;
-  color: #fff;
+  background: var(--brand);
+  color: var(--brand-fg);
   font-weight: 700;
   font-size: 0.88rem;
   display: inline-flex;
@@ -1630,12 +1653,12 @@ a {
 .install-action:active { transform: scale(0.97); }
 
 .install-action--primary {
-  background: #1e3a5f;
-  border-color: #1e3a5f;
-  color: #fff;
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-fg);
 }
 
-.install-action--primary:hover { background: #16304f; border-color: #16304f; }
+.install-action--primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
 
 /* ===== Auto-prompt Banner ===== */
 
@@ -1680,8 +1703,8 @@ a {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: #1e3a5f;
-  color: #fff;
+  background: var(--brand);
+  color: var(--brand-fg);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1733,12 +1756,12 @@ a {
 [data-theme="dark"] .install-banner-btn--ghost:hover { background: rgba(255,255,255,0.08); }
 
 .install-banner-btn--primary {
-  background: #1e3a5f;
-  color: #fff;
-  border-color: #1e3a5f;
+  background: var(--brand);
+  color: var(--brand-fg);
+  border-color: var(--brand);
 }
 
-.install-banner-btn--primary:hover { background: #16304f; border-color: #16304f; }
+.install-banner-btn--primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
 
 /* Narrow screens: stack banner text + buttons */
 @media (max-width: 480px) {
@@ -1843,8 +1866,11 @@ a {
   left: 50%;
   transform: translateX(-50%);
   z-index: 10000;
-  background: var(--gray-800, #2a2927);
-  color: #fff;
+  /* Toast is a high-attention overlay — keep it dark in BOTH themes
+     (var(--gray-800) flips light in dark mode, which made the
+     toast invisible against itself). */
+  background: #2a2927;
+  color: #ffffff;
   padding: 0.75rem 1rem;
   border-radius: var(--radius, 10px);
   box-shadow: var(--shadow-lg);
