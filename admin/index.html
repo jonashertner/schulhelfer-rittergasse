@@ -140,6 +140,18 @@
           <label for="event-desc">Beschreibung <span class="hint">(optional)</span></label>
           <textarea id="event-desc" rows="3" maxlength="500" placeholder="Was sollen die Helfer tun?"></textarea>
         </div>
+        <fieldset class="form-fieldset form-fieldset--public">
+          <legend>Ansprechperson <span class="public-badge">öffentlich sichtbar</span></legend>
+          <p class="form-hint">Beide Felder sind optional. Wenn ausgefüllt, erscheinen sie auf der öffentlichen Anlass-Karte und im iCal-Eintrag. Bitte nur Schul-Kontaktdaten verwenden — keine privaten Mobilnummern.</p>
+          <div class="form-row">
+            <label for="event-kontakt-name">Kontaktperson</label>
+            <input type="text" id="event-kontakt-name" maxlength="80" placeholder="z.B. Frau Müller, Sekretariat">
+          </div>
+          <div class="form-row">
+            <label for="event-kontakt-email">Kontakt-Email</label>
+            <input type="email" id="event-kontakt-email" maxlength="254" placeholder="ansprech@schule.bs.ch">
+          </div>
+        </fieldset>
         <p id="event-form-error" class="error-msg" hidden></p>
         <footer class="modal-foot">
           <button type="button" class="btn btn-secondary" data-close>Abbrechen</button>

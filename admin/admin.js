@@ -303,6 +303,8 @@
     $('#event-time').value = event ? event.zeit || '' : '';
     $('#event-helfer').value = event ? event.maxHelfer || '' : '';
     $('#event-desc').value = event ? event.beschreibung || '' : '';
+    $('#event-kontakt-name').value = event ? event.kontaktName || '' : '';
+    $('#event-kontakt-email').value = event ? event.kontaktEmail || '' : '';
     hide('#event-form-error');
     setBusy('#event-save-btn', false);
     openModal('event-modal');
@@ -316,7 +318,9 @@
       datum: $('#event-date').value,
       zeit: $('#event-time').value.trim(),
       helfer: parseInt($('#event-helfer').value, 10),
-      beschreibung: $('#event-desc').value.trim()
+      beschreibung: $('#event-desc').value.trim(),
+      kontaktName: $('#event-kontakt-name').value.trim(),
+      kontaktEmail: $('#event-kontakt-email').value.trim().toLowerCase()
     };
     if (!data.name)  return show('#event-form-error', 'Bitte einen Namen eingeben.');
     if (!data.datum) return show('#event-form-error', 'Bitte ein Datum wählen.');

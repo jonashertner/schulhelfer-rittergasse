@@ -486,7 +486,9 @@ function getAllEventsAdmin() {
       status: String(row[7] || 'aktiv').toLowerCase() || 'aktiv',
       schuljahr: String(row[8] || ''),
       sichtbar: String(row[9] || ''),
-      notizen: String(row[10] || '')
+      notizen: String(row[10] || ''),
+      kontaktName: String(row[11] || ''),
+      kontaktEmail: String(row[12] || '')
     });
   }
   return { success: true, events: events };
@@ -517,7 +519,9 @@ function addEventAdmin(data) {
       'aktiv',
       jahrFor(validation.datum),
       '',
-      ''
+      '',
+      sheetSafe(validation.kontaktName),
+      sheetSafe(validation.kontaktEmail)
     ]);
     var newRow = sheet.getLastRow();
     sheet.getRange(newRow, 6).setFormula(angemeldeteFormulaForRow(newRow));
@@ -557,6 +561,8 @@ function updateEventAdmin(data) {
     sheet.getRange(rowIdx, 5).setValue(validation.helfer);
     sheet.getRange(rowIdx, 7).setValue(sheetSafe(validation.beschreibung));
     sheet.getRange(rowIdx, 9).setValue(jahrFor(validation.datum));
+    sheet.getRange(rowIdx, 12).setValue(sheetSafe(validation.kontaktName));
+    sheet.getRange(rowIdx, 13).setValue(sheetSafe(validation.kontaktEmail));
     // Re-assert the formulas in case the row was edited manually and
     // those cells got clobbered with values.
     sheet.getRange(rowIdx, 6).setFormula(angemeldeteFormulaForRow(rowIdx));
@@ -626,13 +632,30 @@ function validateEventInput(data) {
   }
   var datum = parseDate(data.datum);
   if (!datum) return { ok: false, error: 'Ungültiges Datum.' };
+
+  // Optional public-contact fields. Both can be blank. If kontaktEmail
+  // is non-empty, validate the format; admins who only have a phone
+  // person (no email) can still fill kontaktName alone.
+  var kontaktName = sanitizeInput(data.kontaktName || '');
+  var kontaktEmail = String(data.kontaktEmail || '').trim().toLowerCase();
+  if (kontaktName.length > 80) {
+    return { ok: false, error: 'Kontaktperson zu lang (max. 80 Zeichen).' };
+  }
+  if (kontaktEmail) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(kontaktEmail) || kontaktEmail.length > 254) {
+      return { ok: false, error: 'Ungültige Kontakt-Email.' };
+    }
+  }
+
   return {
     ok: true,
     name: name,
     zeit: zeit,
     beschreibung: beschreibung,
     helfer: helfer,
-    datum: datum
+    datum: datum,
+    kontaktName: kontaktName,
+    kontaktEmail: kontaktEmail
   };
 }
 
@@ -852,7 +875,12 @@ function getAktiveAnlaesse() {
         maxHelfer: maxHelfer,
         aktuelleHelfer: aktuelleHelfer,
         freiePlaetze: freiePlaetze,
-        voll: aktuelleHelfer >= maxHelfer
+        voll: aktuelleHelfer >= maxHelfer,
+        // Per-event public contact (optional). Admins type these in
+        // the admin UI / Sheet under "öffentlich sichtbar"; if empty,
+        // the public card simply omits the contact line.
+        kontaktName: sanitizeInput(String(row[11] || '')),
+        kontaktEmail: sanitizeInput(String(row[12] || ''))
       });
     }
   }
@@ -1566,7 +1594,19 @@ function neuerAnlassDialog() {
       
       <label>Beschreibung (optional)</label>
       <textarea id="b" rows="2" placeholder="Was sollen die Helfer tun?"></textarea>
-      
+
+      <label>Kontaktperson (optional, ÖFFENTLICH SICHTBAR)</label>
+      <input id="kn" maxlength="80" placeholder="z.B. Frau Müller, Sekretariat">
+
+      <label>Kontakt-Email (optional, ÖFFENTLICH SICHTBAR)</label>
+      <input id="ke" type="email" maxlength="254" placeholder="ansprech@schule.bs.ch">
+
+      <p style="font-size:12px;color:#64748b;margin-top:6px;line-height:1.4;">
+        Falls ausgefüllt, erscheinen Name &amp; Email auf jeder Anlass-Karte
+        und in den iCal-Einträgen. Bitte nur Schulkontakt-Daten verwenden,
+        keine privaten Mobilnummern.
+      </p>
+
       <button type="submit">✓ Anlass erstellen</button>
     </form>
     <script>
@@ -1585,12 +1625,14 @@ function neuerAnlassDialog() {
             datum: document.getElementById("d").value,
             zeit: document.getElementById("z").value,
             helfer: document.getElementById("h").value,
-            beschreibung: document.getElementById("b").value
+            beschreibung: document.getElementById("b").value,
+            kontaktName: document.getElementById("kn").value,
+            kontaktEmail: document.getElementById("ke").value
           });
       };
     </script>
-  `).setWidth(380).setHeight(420);
-  
+  `).setWidth(420).setHeight(620);
+
   SpreadsheetApp.getUi().showModalDialog(html, '🏰 Neuer Anlass');
 }
 
@@ -1600,6 +1642,8 @@ function anlassHinzufuegen(data) {
   var zeit = sanitizeInput(data.zeit || '');
   var beschreibung = sanitizeInput(data.beschreibung || '');
   var helfer = parseInt(data.helfer) || 0;
+  var kontaktName = sanitizeInput(data.kontaktName || '');
+  var kontaktEmail = String(data.kontaktEmail || '').trim().toLowerCase();
 
   if (!name || helfer < 1) {
     throw new Error('Bitte füllen Sie alle Pflichtfelder aus.');
@@ -1609,6 +1653,12 @@ function anlassHinzufuegen(data) {
   }
   if (beschreibung.length > MAX_DESC_LEN) {
     throw new Error('Die Beschreibung ist zu lang (max. ' + MAX_DESC_LEN + ' Zeichen).');
+  }
+  if (kontaktName.length > 80) {
+    throw new Error('Kontaktperson zu lang (max. 80 Zeichen).');
+  }
+  if (kontaktEmail && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(kontaktEmail) || kontaktEmail.length > 254)) {
+    throw new Error('Ungültige Kontakt-Email.');
   }
 
   var datum = parseDate(data.datum);
@@ -1642,7 +1692,9 @@ function anlassHinzufuegen(data) {
       'aktiv',
       jahrFor(datum),
       '', // Sichtbar? – formula written by setupVerstaerken/refresh
-      ''  // Notizen
+      '', // Notizen
+      sheetSafe(kontaktName),
+      sheetSafe(kontaktEmail)
     ]);
     var newRow = sheet.getLastRow();
     sheet.getRange(newRow, 6).setFormula(angemeldeteFormulaForRow(newRow));
@@ -1664,7 +1716,12 @@ function anlassHinzufuegen(data) {
 
 var ANLASS_HEADERS = [
   'ID', 'Name', 'Datum', 'Zeit', 'Benötigte Helfer', 'Angemeldete',
-  'Beschreibung', 'Status', 'Jahr', 'Sichtbar?', 'Notizen (intern)'
+  'Beschreibung', 'Status', 'Jahr', 'Sichtbar?', 'Notizen (intern)',
+  // Per-event public contact person. Both fields are optional and
+  // appear ON THE PUBLIC SITE if filled in. The admin UI labels them
+  // "(öffentlich sichtbar)" so admins know not to put private mobile
+  // numbers in here.
+  'Kontaktperson', 'Kontakt-Email'
 ];
 var ANMELDUNG_HEADERS = [
   'Zeitstempel', 'Anlass-ID', 'Name', 'E-Mail', 'Telefon', 'Anlass',

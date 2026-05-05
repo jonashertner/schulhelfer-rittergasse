@@ -561,6 +561,24 @@ body {
   margin: 0 0 var(--space-5);
 }
 
+.event-contact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  color: var(--gray-500);
+  background: var(--gray-100);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  margin: 0 0 var(--space-4);
+  line-height: 1.5;
+}
+.event-contact svg { flex-shrink: 0; color: var(--sage); }
+.event-contact-label { font-weight: 600; color: var(--gray-600); }
+.event-contact a { color: var(--sage-dark); text-decoration: none; }
+.event-contact a:hover { text-decoration: underline; }
+
 .event-actions {
   display: flex;
   align-items: center;
