@@ -207,6 +207,7 @@
       badge.querySelector('.admin-indicator-logout').addEventListener('click', () => {
         clearAdminKey();
         setupAdminIndicator();
+        setupSpreadsheetLink();
         renderEvents();
         announce('Admin-Modus beendet');
       });
@@ -214,12 +215,19 @@
     }
   }
 
-  // Setup spreadsheet link
+  // Setup spreadsheet link. Admin-only: parents must never see the
+  // Sheet URL — it contains every helper's name, e-mail and phone.
+  // Re-call this after admin-key capture / logout so the link toggles
+  // visibility in step with the admin indicator.
   function setupSpreadsheetLink() {
     const link = $('#spreadsheet-link');
-    if (link && CONFIG.SPREADSHEET_URL && CONFIG.SPREADSHEET_URL.trim() !== '') {
+    if (!link) return;
+    if (isAdmin() && CONFIG.SPREADSHEET_URL && CONFIG.SPREADSHEET_URL.trim() !== '') {
       link.href = CONFIG.SPREADSHEET_URL;
       link.style.display = 'inline-flex';
+    } else {
+      link.removeAttribute('href');
+      link.style.display = 'none';
     }
   }
 
@@ -1505,6 +1513,13 @@
     el.errorText.textContent = msg;
     el.errorMessage.hidden = false;
     el.errorMessage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Move focus so keyboard users land on the message after submit.
+    // tabindex=-1 + outline:none keeps the visual unchanged.
+    if (el.errorMessage.getAttribute('tabindex') == null) {
+      el.errorMessage.setAttribute('tabindex', '-1');
+      el.errorMessage.style.outline = 'none';
+    }
+    try { el.errorMessage.focus({ preventScroll: true }); } catch (_) {}
   }
 
   function hideError() { el.errorMessage.hidden = true; }

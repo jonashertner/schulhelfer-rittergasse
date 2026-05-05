@@ -83,9 +83,21 @@
     });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') allModals.forEach(closeModal);
+      if (e.key === 'Escape') {
+        // Close only the top-most open modal so a stacked
+        // helpers→manual sequence doesn't collapse all the way out.
+        const topOpen = openModalStack[openModalStack.length - 1];
+        if (topOpen) closeModal(topOpen);
+      }
     });
   }
+
+  // Track open modals so body-scroll lock and Esc behave correctly
+  // when modals stack (e.g. helpers drawer → manual-add modal).
+  const openModalStack = [];
+  // Where to send focus back when each modal closes (the element that
+  // had focus right before openModal was called).
+  const focusReturnMap = new Map();
 
   function showView(name) {
     View.login.hidden = name !== 'login';
@@ -443,12 +455,47 @@
   // UI helpers
   // ============================================================
   function openModal(id) {
-    document.getElementById(id).hidden = false;
+    const el = document.getElementById(id);
+    if (!el || !el.hidden === false) {
+      // Already open — just push if not yet on the stack so Esc works.
+      if (openModalStack[openModalStack.length - 1] !== id) openModalStack.push(id);
+      return;
+    }
+    el.hidden = false;
+    if (!openModalStack.includes(id)) {
+      focusReturnMap.set(id, document.activeElement);
+      openModalStack.push(id);
+    }
     document.body.style.overflow = 'hidden';
+    // Hand focus to the first focusable form field / button inside,
+    // skipping the close-X (which would land users on a destructive
+    // action). Two RAFs let the browser paint before we focus, which
+    // iOS Safari needs to actually accept the focus call.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const target = el.querySelector(
+        'input:not([type="hidden"]):not([disabled]),' +
+        ' textarea:not([disabled]),' +
+        ' select:not([disabled]),' +
+        ' .btn-primary:not([disabled])'
+      );
+      if (target) try { target.focus({ preventScroll: false }); } catch (_) {}
+    }));
   }
   function closeModal(id) {
-    document.getElementById(id).hidden = true;
-    document.body.style.overflow = '';
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.hidden = true;
+    const idx = openModalStack.lastIndexOf(id);
+    if (idx !== -1) openModalStack.splice(idx, 1);
+    // Body scroll only unlocks once every modal is closed.
+    if (openModalStack.length === 0) document.body.style.overflow = '';
+    // Restore focus to whatever opened this modal — keyboard users
+    // don't get dumped at the top of the page.
+    const returnTo = focusReturnMap.get(id);
+    focusReturnMap.delete(id);
+    if (returnTo && typeof returnTo.focus === 'function') {
+      try { returnTo.focus({ preventScroll: true }); } catch (_) {}
+    }
   }
   function setBusy(sel, busy) {
     const btn = $(sel);

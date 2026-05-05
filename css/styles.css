@@ -256,10 +256,6 @@ body {
   margin: 0;
 }
 
-.school-type {
-  display: none;
-}
-
 .header-intro {
   font-size: 1.0625rem;
   line-height: 1.65;
@@ -299,14 +295,17 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Use theme tokens (not hardcoded literals) so dark mode flips
+   automatically. The previous fixed RGB values became unreadable
+   against the dark mode --error-bg / --success-bg surfaces. */
 .message--error {
   background: var(--error-bg);
-  color: #8b5a5a;
+  color: var(--error);
 }
 
 .message--success {
   background: var(--success-bg);
-  color: #4a6b5a;
+  color: var(--success);
 }
 
 .message-icon { flex-shrink: 0; }
@@ -439,10 +438,14 @@ body {
   box-shadow: var(--shadow-md);
 }
 
-.event-card:focus {
-  outline: none;
-  border-color: var(--sage);
-  box-shadow: 0 0 0 3px var(--sage-light);
+/* Visible focus ring even when the card is also selected (the
+   selected state uses --sage-light as background, which made the
+   previous --sage-light shadow ring disappear). */
+.event-card:focus,
+.event-card:focus-visible {
+  outline: 2px solid var(--sage-dark);
+  outline-offset: 2px;
+  border-color: var(--sage-dark);
 }
 
 .event-card[aria-selected="true"] {
@@ -900,7 +903,7 @@ body {
 .footer {
   background: var(--warm-white);
   border-top: 1px solid var(--gray-200);
-  padding: var(--space-10) 0;
+  padding: var(--space-10) 0 calc(var(--space-10) + env(safe-area-inset-bottom, 0px));
   margin-top: auto;
 }
 
