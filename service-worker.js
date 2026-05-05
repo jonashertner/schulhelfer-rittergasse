@@ -3,7 +3,7 @@
  * Provides offline support and caching for better performance
  */
 
-const CACHE_NAME = 'schulhelfer-v15';
+const CACHE_NAME = 'schulhelfer-v16';
 
 // Resolve asset URLs relative to the service worker's own location so
 // they work regardless of deployment subpath (e.g. GitHub Pages project
@@ -13,9 +13,13 @@ const STATIC_ASSETS = [
   './index.html',
   './css/styles.css',
   './js/app.js',
+  './js/helferliste-docx.js',
   './manifest.webmanifest',
   './icons/icon.svg',
-  './icons/icon-maskable.svg'
+  './icons/icon-maskable.svg',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png'
 ].map((p) => new URL(p, self.location).href);
 
 const STATIC_ASSET_PATHNAMES = STATIC_ASSETS.map((u) => new URL(u).pathname);

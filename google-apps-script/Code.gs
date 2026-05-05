@@ -2547,13 +2547,41 @@ function archiviereJahr(jahr) {
       freshHelferArchive = true;
     }
 
-    if (anlassToMove.length) {
+    // Idempotency on retry: a previous run may have copied (some)
+    // rows already if it crashed mid-way. Skip rows whose key is
+    // already in the archive so we never double-write the same data.
+    //
+    //   Anlässe key   = ID (column A)
+    //   Anmeldungen key = (Anlass-ID, lower(email)) — registriereHelfer
+    //                     enforces this pair unique on the live sheet,
+    //                     so it's also unique within a year archive.
+    var existingAnlassIds = readArchiveKeySet(anlassArchive, function(row) {
+      return String(row[0] || '').trim();
+    });
+    var existingHelferKeys = readArchiveKeySet(helferArchive, function(row) {
+      var aid = String(row[1] || '').trim();
+      var em  = String(row[3] || '').trim().toLowerCase();
+      return aid && em ? aid + '|' + em : '';
+    });
+
+    var anlassToWrite = anlassToMove.filter(function(row) {
+      var id = String(row[0] || '').trim();
+      return id && !existingAnlassIds[id];
+    });
+    var helferToWrite = helferToMove.filter(function(row) {
+      var aid = String(row[1] || '').trim();
+      var em  = String(row[3] || '').trim().toLowerCase();
+      var key = aid && em ? aid + '|' + em : '';
+      return key && !existingHelferKeys[key];
+    });
+
+    if (anlassToWrite.length) {
       var startRow = anlassArchive.getLastRow() + 1;
-      anlassArchive.getRange(startRow, 1, anlassToMove.length, ANLASS_HEADERS.length).setValues(anlassToMove);
+      anlassArchive.getRange(startRow, 1, anlassToWrite.length, ANLASS_HEADERS.length).setValues(anlassToWrite);
     }
-    if (helferToMove.length) {
+    if (helferToWrite.length) {
       var startRow2 = helferArchive.getLastRow() + 1;
-      helferArchive.getRange(startRow2, 1, helferToMove.length, ANMELDUNG_HEADERS.length).setValues(helferToMove);
+      helferArchive.getRange(startRow2, 1, helferToWrite.length, ANMELDUNG_HEADERS.length).setValues(helferToWrite);
     }
 
     // --- Delete phase (bottom-up to keep indices valid) ---
@@ -2587,6 +2615,25 @@ function archiviereJahr(jahr) {
   } finally {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
+}
+
+/**
+ * Build a {key: true} map of every existing archive row so the
+ * archive function can skip duplicates on a retry. Returns an empty
+ * map for nonexistent / empty sheets.
+ */
+function readArchiveKeySet(sheet, keyFn) {
+  var set = {};
+  if (!sheet) return set;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return set;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var k = keyFn(values[i]);
+    if (k) set[k] = true;
+  }
+  return set;
 }
 
 function protectArchiveSheet(sheet, jahr) {
