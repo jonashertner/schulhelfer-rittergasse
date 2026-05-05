@@ -100,7 +100,11 @@ function sheetSafe(value) {
  *   "0041791234567"     → "+41 79 123 45 67"
  *   "(079) 123-45-67"   → "+41 79 123 45 67"
  *   "061 999 00 00"     → "+41 61 999 00 00"   (Swiss landline)
- *   "+49 30 12345678"   → "+49 30 12345678"    (foreign: untouched format)
+ *   "+49 30 12345678"   → "+49 30 12345678"    (German landline)
+ *   "0049 30 12345678"  → "+49 30 12345678"
+ *   "49 30 12345678"    → "+49 30 12345678"    (subscriber digits only)
+ *   "+49 151 1234567"   → "+49 151 1234567"    (German mobile, 3-digit area)
+ *   "+33 1 23 45 67 89" → "+33 1 23 45 67 89"  (other foreign: untouched)
  *   ""                  → ""
  *   "Bitte anrufen"     → "Bitte anrufen"      (unparseable: untouched)
  */
@@ -140,9 +144,19 @@ function normalizePhone(raw) {
            ' ' + digits.substr(7, 2) + ' ' + digits.substr(9, 2);
   }
 
-  // Non-Swiss international (e.g. "+49..."): keep as originally typed
-  // (trimmed). We don't know the local grouping convention, so losing
-  // the spaces would be worse than leaving them alone.
+  // German numbers: 49 + 9–11 subscriber digits = 11–13 total. Format
+  // as "+49 <area> <rest>" with a 3-digit mobile prefix (1[5-9]…) or a
+  // 2-digit landline area (heuristic — actual German area codes vary
+  // 2–5 digits but we don't have a database; 2 is the safe fallback).
+  if (digits.indexOf('49') === 0 && digits.length >= 11 && digits.length <= 13) {
+    var deRest = digits.substring(2);
+    var deAreaLen = /^1[5-9]/.test(deRest) ? 3 : 2;
+    return '+49 ' + deRest.substring(0, deAreaLen) + ' ' + deRest.substring(deAreaLen);
+  }
+
+  // Other international (e.g. "+33...", "+39..."): keep as originally
+  // typed (trimmed). We don't know the local grouping convention, so
+  // losing the spaces would be worse than leaving them alone.
   if (hasPlus) return original;
 
   // Nothing matched our Swiss heuristics (no leading 0, no +, unusual
