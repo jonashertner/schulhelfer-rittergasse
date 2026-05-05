@@ -459,8 +459,12 @@
   // ============================================================
   function openModal(id) {
     const el = document.getElementById(id);
-    if (!el || !el.hidden === false) {
-      // Already open — just push if not yet on the stack so Esc works.
+    if (!el) return;
+    // Already open: just track on the stack so Esc still hits the
+    // right modal, then bail. (Operator-precedence trap: `!a === b`
+    // parses as `(!a) === b`, which broke this earlier — every
+    // modal silently early-returned when it was actually hidden.)
+    if (!el.hidden) {
       if (openModalStack[openModalStack.length - 1] !== id) openModalStack.push(id);
       return;
     }
