@@ -61,7 +61,7 @@
         </div>
         <nav class="admin-nav">
           <a href="../" class="btn btn-ghost">→ öffentliche Seite</a>
-          <button type="button" class="btn btn-ghost" id="logout-btn">Abmelden</button>
+          <button type="button" class="btn btn-ghost js-logout-btn">Abmelden</button>
         </nav>
       </div>
     </header>
@@ -107,6 +107,25 @@
         <p id="past-empty" class="admin-empty" hidden>Keine vergangenen Anlässe.</p>
       </section>
     </main>
+
+    <footer class="admin-footer" role="contentinfo">
+      <div class="admin-footer-inner">
+        <div class="admin-footer-brand">
+          <span class="admin-footer-icon" aria-hidden="true">🛡️</span>
+          <div>
+            <strong>Schulhelfer · Admin</strong>
+            <span class="admin-footer-school">Primarstufe Rittergasse Basel</span>
+          </div>
+        </div>
+        <nav class="admin-footer-nav" aria-label="Footer">
+          <a href="#dashboard-view" class="admin-footer-link">↑ Nach oben</a>
+          <span class="admin-footer-sep" aria-hidden="true">·</span>
+          <a href="../" class="admin-footer-link">→ öffentliche Seite</a>
+          <span class="admin-footer-sep" aria-hidden="true">·</span>
+          <button type="button" class="admin-footer-link js-logout-btn">Abmelden</button>
+        </nav>
+      </div>
+    </footer>
   </section>
 
   <!-- ============================ Event modal ============================ -->

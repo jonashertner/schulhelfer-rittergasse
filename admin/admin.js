@@ -59,7 +59,10 @@
 
   function bindStaticHandlers() {
     $('#login-form').addEventListener('submit', handleLogin);
-    $('#logout-btn').addEventListener('click', handleLogout);
+    // Logout button is duplicated in the header AND footer — bind to
+    // every .js-logout-btn so the long dashboard has a close-out
+    // gesture without scrolling back up.
+    $$('.js-logout-btn').forEach(btn => btn.addEventListener('click', handleLogout));
     $('#new-event-btn').addEventListener('click', () => openEventModal(null));
     $('#refresh-btn').addEventListener('click', () => refreshEvents());
     $('#event-form').addEventListener('submit', handleEventSubmit);
