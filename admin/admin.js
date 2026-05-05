@@ -73,6 +73,7 @@
     $('#manual-form').addEventListener('submit', handleManualSubmit);
     $('#helpers-mailto-btn').addEventListener('click', helpersMailto);
     $('#helpers-add-btn').addEventListener('click', openManualForCurrent);
+    $('#helpers-docx-btn').addEventListener('click', downloadHelferlisteDocx);
 
     const allModals = ['event-modal', 'confirm-modal', 'helpers-modal', 'manual-modal', 'archive-modal', 'integrity-modal'];
     allModals.forEach(id => {
@@ -639,6 +640,35 @@
     // Refresh dashboard – capacity counts may have changed (storniert
     // frees a slot, aktiv re-claims one).
     refreshEvents();
+  }
+
+  // Build the printable Word Helferliste straight from the data we
+  // already loaded for the helpers drawer — no extra network call.
+  // Only `aktiv` registrations make it onto the printed sheet:
+  // storniert helpers freed their slot, "nicht erschienen" is an
+  // after-event status. Empty rows up to maxHelfer are added by the
+  // shared docx builder so day-of-event walk-ins have space.
+  function downloadHelferlisteDocx() {
+    if (!State.helpersEvent) return;
+    if (!window.HelferListeDocx || typeof window.HelferListeDocx.build !== 'function') {
+      show('#helpers-error', 'Word-Generator nicht geladen. Bitte Seite neu laden.');
+      return;
+    }
+    const event = State.helpersEvent;
+    const aktive = (State.helpersList || []).filter(h => h.status === 'aktiv');
+    try {
+      const bytes = window.HelferListeDocx.build({
+        name: event.name,
+        datum: event.datumDisplay || event.datum || '',
+        zeit: event.zeit,
+        beschreibung: event.beschreibung,
+        maxHelfer: event.maxHelfer
+      }, aktive);
+      window.HelferListeDocx.download(bytes, window.HelferListeDocx.filenameFor(event));
+    } catch (err) {
+      console.error('helferliste docx build failed', err);
+      show('#helpers-error', 'Helferliste konnte nicht erstellt werden.');
+    }
   }
 
   function helpersMailto() {
