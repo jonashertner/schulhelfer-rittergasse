@@ -70,9 +70,9 @@
         <button type="button" class="btn btn-primary" id="new-event-btn">+ Neuer Anlass</button>
         <button type="button" class="btn btn-secondary" id="refresh-btn" aria-label="Liste aktualisieren">↻</button>
         <span class="toolbar-spacer"></span>
-        <button type="button" class="btn btn-ghost" id="integrity-btn" title="Auf Datenfehler prüfen">🔍 Daten prüfen</button>
-        <button type="button" class="btn btn-ghost" id="archive-btn" title="Vergangenes Jahr archivieren">📂 Jahr archivieren</button>
-        <a class="btn btn-ghost" id="sheet-link" href="#" target="_blank" rel="noopener noreferrer" title="Google-Tabelle öffnen (für Fortgeschrittene)">📋 Tabelle</a>
+        <button type="button" class="btn btn-ghost" id="integrity-btn" title="Auf Datenfehler prüfen"><span aria-hidden="true">🔍</span> Daten prüfen</button>
+        <button type="button" class="btn btn-ghost" id="archive-btn" title="Vergangenes Jahr archivieren"><span aria-hidden="true">📂</span> Jahr archivieren</button>
+        <a class="btn btn-ghost" id="sheet-link" href="#" target="_blank" rel="noopener noreferrer" title="Google-Tabelle öffnen (für Fortgeschrittene)"><span aria-hidden="true">📋</span> Tabelle</a>
       </div>
 
       <div id="loading-banner" class="admin-banner admin-banner--info" hidden>Wird geladen…</div>
@@ -129,7 +129,7 @@
           </div>
           <div class="form-row">
             <label for="event-helfer">Benötigte Helfer <span class="req" aria-hidden="true">*</span></label>
-            <input type="number" id="event-helfer" min="1" required placeholder="z.B. 8">
+            <input type="number" id="event-helfer" min="1" required placeholder="z.B. 8" inputmode="numeric" enterkeyhint="next">
           </div>
         </div>
         <div class="form-row">
@@ -149,7 +149,7 @@
           </div>
           <div class="form-row">
             <label for="event-kontakt-email">Kontakt-Email</label>
-            <input type="email" id="event-kontakt-email" maxlength="254" placeholder="ansprech@schule.bs.ch">
+            <input type="email" id="event-kontakt-email" maxlength="254" placeholder="ansprech@schule.bs.ch" inputmode="email" enterkeyhint="done" autocapitalize="off" spellcheck="false">
           </div>
         </fieldset>
         <p id="event-form-error" class="error-msg" hidden></p>
@@ -219,11 +219,11 @@
         </div>
         <div class="form-row">
           <label for="manual-email">E-Mail <span class="req" aria-hidden="true">*</span></label>
-          <input type="email" id="manual-email" required maxlength="254" placeholder="email@beispiel.ch">
+          <input type="email" id="manual-email" required maxlength="254" placeholder="email@beispiel.ch" inputmode="email" enterkeyhint="next" autocapitalize="off" spellcheck="false">
         </div>
         <div class="form-row">
           <label for="manual-tel">Telefon <span class="hint">(optional)</span></label>
-          <input type="tel" id="manual-tel" maxlength="30" placeholder="+41 79 123 45 67">
+          <input type="tel" id="manual-tel" maxlength="30" placeholder="+41 79 123 45 67" inputmode="tel" enterkeyhint="done">
         </div>
         <p id="manual-error" class="error-msg" hidden></p>
         <footer class="modal-foot">

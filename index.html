@@ -44,7 +44,6 @@
         <div class="school-info">
           <p class="school-name">Primarstufe Rittergasse Basel</p>
           <h1 class="site-title">Schulhelfer gesucht!</h1>
-          <p class="school-type">Kindergarten & Primarschule</p>
         </div>
       </div>
       <p class="header-intro">
@@ -162,9 +161,9 @@
               <input type="hidden" id="event-id" name="eventId">
 
               <!-- Honeypot (hidden from humans, catches bots) -->
-              <div class="form-group" aria-hidden="true" style="position:absolute;left:-9999px;height:0;overflow:hidden;tab-index:-1">
-                <label for="website">Website</label>
-                <input type="text" id="website" name="website" autocomplete="off" tabindex="-1">
+              <div class="form-group" aria-hidden="true" style="position:absolute;left:-9999px;height:0;overflow:hidden">
+                <label for="website" aria-hidden="true">Website</label>
+                <input type="text" id="website" name="website" autocomplete="off" tabindex="-1" aria-hidden="true">
               </div>
 
               <!-- Name -->
@@ -178,7 +177,7 @@
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                     <circle cx="12" cy="7" r="4"></circle>
                   </svg>
-                  <input type="text" id="name" name="name" class="form-input" required autocomplete="name" placeholder="Vor- und Nachname" aria-describedby="name-error" aria-required="true">
+                  <input type="text" id="name" name="name" class="form-input" required autocomplete="name" placeholder="Vor- und Nachname" aria-describedby="name-error" aria-required="true" enterkeyhint="next">
                 </div>
                 <span id="name-error" class="form-error" role="alert" hidden></span>
               </div>
@@ -194,7 +193,7 @@
                     <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                     <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
-                  <input type="email" id="email" name="email" class="form-input" required autocomplete="email" placeholder="ihre.email@beispiel.ch" aria-describedby="email-error" aria-required="true">
+                  <input type="email" id="email" name="email" class="form-input" required autocomplete="email" placeholder="ihre.email@beispiel.ch" aria-describedby="email-error" aria-required="true" inputmode="email" enterkeyhint="next" autocapitalize="off" spellcheck="false">
                 </div>
                 <span id="email-error" class="form-error" role="alert" hidden></span>
               </div>
@@ -209,7 +208,7 @@
                   <svg class="input-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
                   </svg>
-                  <input type="tel" id="phone" name="phone" class="form-input" autocomplete="tel" placeholder="079 123 45 67" aria-describedby="phone-hint phone-error">
+                  <input type="tel" id="phone" name="phone" class="form-input" autocomplete="tel" placeholder="079 123 45 67" aria-describedby="phone-hint phone-error" inputmode="tel" enterkeyhint="done">
                 </div>
                 <span id="phone-error" class="form-error" role="alert" hidden></span>
                 <span id="phone-hint" class="form-hint">Für Rückfragen bei Änderungen</span>

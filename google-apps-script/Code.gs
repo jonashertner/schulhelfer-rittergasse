@@ -328,24 +328,42 @@ function doGet(e) {
       });
       logAudit('GET_EVENTS', { count: events.length }, true, null);
     } else if (action === 'export') {
-      // Data export functionality
-      var result = exportData();
-      output = JSON.stringify(result);
-      logAudit('EXPORT_DATA', {}, result.success, result.error);
+      // Admin-only PII dump. Same gate as getHelferList: validate the
+      // ADMIN_KEY (constant-time) BEFORE running the export, and feed
+      // failed attempts into the global brute-force bucket.
+      if (!isAdminAuthorized(e.parameter.adminKey)) {
+        if (!checkRateLimit('admin-fail', ADMIN_BRUTEFORCE_CAP)) {
+          logAudit('EXPORT_AUTH_BRUTEFORCE', {}, false, 'Lockout');
+          output = JSON.stringify({ success: false, error: 'Zu viele Fehlversuche. Bitte später erneut versuchen.' });
+        } else {
+          logAudit('EXPORT_AUTH_FAIL', {}, false, 'Invalid admin key');
+          output = JSON.stringify({ success: false, error: 'Keine Berechtigung.' });
+        }
+      } else {
+        var result = exportData();
+        output = JSON.stringify(result);
+        logAudit('EXPORT_DATA', {}, result.success, result.error);
+      }
     } else if (action === 'getHelferList') {
       // Admin-only: return full registration data for a single event so
       // the frontend can build a .docx Helferliste. Requires ADMIN_KEY.
-      var result = getHelferList(e.parameter.eventId, e.parameter.adminKey);
-      // Brute-force mitigation: failed auth attempts all share a global
-      // bucket independent of the per-identifier GET limit. Attackers
-      // rotating identifiers still hit this cap.
-      if (!result.success && result.error === 'Keine Berechtigung.') {
+      // Validate the key first so failed attempts feed the brute-force
+      // bucket BEFORE the expensive sheet read happens — previously a
+      // close-to-brute-forced key still got the data back on the
+      // success boundary because the bucket only fired post-query.
+      if (!isAdminAuthorized(e.parameter.adminKey)) {
         if (!checkRateLimit('admin-fail', ADMIN_BRUTEFORCE_CAP)) {
-          result = { success: false, error: 'Zu viele Fehlversuche. Bitte später erneut versuchen.' };
+          logAudit('ADMIN_AUTH_BRUTEFORCE', { eventId: e.parameter.eventId }, false, 'Lockout');
+          output = JSON.stringify({ success: false, error: 'Zu viele Fehlversuche. Bitte später erneut versuchen.' });
+        } else {
+          logAudit('ADMIN_AUTH_FAIL', { eventId: e.parameter.eventId }, false, 'Invalid admin key');
+          output = JSON.stringify({ success: false, error: 'Keine Berechtigung.' });
         }
+      } else {
+        var result = getHelferList(e.parameter.eventId, e.parameter.adminKey);
+        output = JSON.stringify(result);
+        logAudit('GET_HELFER_LIST', { eventId: e.parameter.eventId }, result.success, result.error);
       }
-      output = JSON.stringify(result);
-      logAudit('GET_HELFER_LIST', { eventId: e.parameter.eventId }, result.success, result.error);
     } else {
       output = JSON.stringify({ 
         success: false,

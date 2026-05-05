@@ -98,7 +98,10 @@
 .login-card input[type=password] {
   font-family: var(--font);
   padding: 12px 14px; border: 1.5px solid var(--gray-200); border-radius: var(--radius);
-  font-size: 15px; background: var(--cream); color: var(--gray-800);
+  /* iOS Safari auto-zooms anything <16px on focus, kicking the user
+     out of the centred login card. 16px stays at the user's chosen
+     scale. */
+  font-size: 16px; background: var(--cream); color: var(--gray-800);
 }
 .login-card input[type=password]:focus {
   border-color: var(--sage); outline: none;
@@ -120,6 +123,12 @@
   border-bottom: 1px solid var(--gray-200);
   padding: var(--space-4) var(--space-6);
   position: sticky; top: 0; z-index: 10;
+}
+@media (max-width: 540px) {
+  /* On small phones the sticky header eats too much vertical space
+     (combined with iOS URL bar) and the modals can't fit at 90vh
+     once the keyboard is up. Drop sticky on mobile. */
+  .admin-header { position: relative; padding: var(--space-3) var(--space-4); }
 }
 .admin-header-row {
   max-width: 1100px; margin: 0 auto;
@@ -143,6 +152,30 @@
 .admin-toolbar {
   display: flex; gap: var(--space-3); align-items: center;
   margin-bottom: var(--space-6);
+  flex-wrap: wrap;
+}
+@media (max-width: 540px) {
+  /* Toolbar at 360px: Neuer Anlass + Refresh stay primary on row 1;
+     the three secondary actions wrap into a 2-col grid on row 2. */
+  .admin-toolbar {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--space-2);
+  }
+  .admin-toolbar .toolbar-spacer { display: none; }
+  .admin-toolbar #integrity-btn,
+  .admin-toolbar #archive-btn,
+  .admin-toolbar #sheet-link {
+    grid-column: span 1;
+    justify-content: center;
+  }
+  .admin-toolbar .btn,
+  .admin-toolbar .btn-ghost {
+    min-height: 44px;
+    font-size: 13px;
+  }
+  /* Refresh icon-button keeps a fixed square footprint. */
+  .admin-toolbar #refresh-btn { min-width: 44px; padding: 0 var(--space-3); }
 }
 
 .admin-banner {
@@ -254,7 +287,21 @@
 
 @media (max-width: 540px) {
   .event-card { grid-template-columns: 1fr; }
-  .event-card-actions { flex-direction: row; }
+  .event-card-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  /* Each action button takes at least its own line's worth of space
+     and keeps a 44-px tap target. Two-and-one wrapping at 360px is
+     fine — beats the previous "everything on one cramped row" layout. */
+  .event-card-actions .btn {
+    flex: 1 1 calc(50% - 3px);
+    min-height: 40px;
+    justify-content: center;
+    font-size: 13px;
+    padding: 8px 10px;
+  }
 }
 
 /* ----- Modal ----- */
@@ -314,12 +361,16 @@
   padding: 10px 12px;
   border: 1.5px solid var(--gray-200);
   border-radius: var(--radius);
-  font-size: 14px;
+  /* 16px prevents iOS auto-zoom on focus. */
+  font-size: 16px;
   background: var(--cream);
   color: var(--gray-800);
   width: 100%;
+  min-width: 0;
   box-sizing: border-box;
+  -webkit-appearance: none;
 }
+.form-row input[type="date"] { appearance: none; }
 .form-row input:focus, .form-row textarea:focus {
   border-color: var(--sage); outline: none;
 }
@@ -435,8 +486,32 @@
 }
 
 @media (max-width: 600px) {
-  .helper-row { grid-template-columns: 1fr; }
+  .helper-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
   .helper-row > * { min-width: 0; }
+  /* 44-px tap targets across the row on mobile so teachers can change
+     status / open a notiz / tap an email link without hunting. */
+  .helper-row .h-name { font-size: 14px; }
+  .helper-row .h-email a,
+  .helper-row .h-tel a {
+    display: inline-block;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .helper-row select {
+    min-height: 44px;
+    padding: 8px 10px;
+    font-size: 14px;
+    width: 100%;
+  }
+  .helper-row .h-noteBtn {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 13px;
+    width: 100%;
+  }
 }
 
 .helpers-bulk {
@@ -486,7 +561,7 @@ select#archive-year {
   font-family: var(--font);
   width: 100%; padding: 10px 12px;
   border: 1.5px solid var(--gray-200); border-radius: var(--radius);
-  background: var(--cream); font-size: 14px;
+  background: var(--cream); font-size: 16px;
 }
 select#archive-year:focus { border-color: var(--sage); outline: none; }
 
