@@ -615,15 +615,6 @@
       telWrap.textContent = '—';
     }
 
-    const select = document.createElement('select');
-    ['aktiv', 'storniert', 'nicht erschienen'].forEach(s => {
-      const o = document.createElement('option');
-      o.value = s; o.textContent = s;
-      if (h.status === s) o.selected = true;
-      select.appendChild(o);
-    });
-    select.addEventListener('change', () => updateHelperStatus(h, select.value, select));
-
     const noteBtn = document.createElement('button');
     noteBtn.type = 'button';
     noteBtn.className = 'h-noteBtn';
@@ -634,7 +625,6 @@
     row.appendChild(name);
     row.appendChild(emailWrap);
     row.appendChild(telWrap);
-    row.appendChild(select);
     row.appendChild(noteBtn);
     return row;
   }
@@ -674,27 +664,6 @@
     setTimeout(() => input.focus(), 30);
   }
 
-  async function updateHelperStatus(h, newStatus, selectEl) {
-    if (newStatus === h.status) return;
-    selectEl.disabled = true;
-    const key = localStorage.getItem(STORAGE_KEY);
-    const result = await callAdmin({
-      action: 'updateRegistration',
-      eventId: h.eventId, email: h.email,
-      status: newStatus
-    }, key);
-    selectEl.disabled = false;
-    if (!result || !result.success) {
-      show('#helpers-error', pickError(result, 'Status konnte nicht geändert werden.'));
-      selectEl.value = h.status;
-      return;
-    }
-    h.status = newStatus;
-    renderHelpers();
-    // Refresh dashboard – capacity counts may have changed (storniert
-    // frees a slot, aktiv re-claims one).
-    refreshEvents();
-  }
 
   // Build the printable Word Helferliste straight from the data we
   // already loaded for the helpers drawer — no extra network call.
