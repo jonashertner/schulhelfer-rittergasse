@@ -54,11 +54,20 @@
 }
 .btn-ghost:hover { color: var(--gray-800); background: var(--gray-100); }
 
+/* Outline danger button — visually subordinate to primary/secondary
+   so destructive actions never compete with the everyday gestures.
+   Hover reveals the filled-tone treatment. */
 .btn-danger {
-  background: var(--error);
-  color: var(--white);
+  background: transparent;
+  color: var(--error);
+  border-color: var(--error);
+  font-weight: 500;
 }
-.btn-danger:hover:not(:disabled) { background: #a96666; }
+.btn-danger:hover:not(:disabled) {
+  background: var(--error-bg);
+  color: var(--error);
+  border-color: var(--error);
+}
 
 .btn-spinner {
   width: 14px; height: 14px; border-radius: 50%;
@@ -195,13 +204,15 @@
   display: flex; align-items: baseline; gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
+/* Small, letter-spaced section heads — magazine-style restraint so
+   the eye lands on event content, not the labels. */
 .admin-section-head h2 {
-  font-size: 16px; font-weight: 600; margin: 0; color: var(--gray-700);
-  text-transform: uppercase; letter-spacing: 0.06em;
+  font-size: 12px; font-weight: 600; margin: 0; color: var(--gray-500);
+  text-transform: uppercase; letter-spacing: 0.12em;
 }
 .admin-count {
   background: var(--gray-100); color: var(--gray-600);
-  font-size: 12px; font-weight: 600;
+  font-size: 11px; font-weight: 600;
   padding: 2px 8px; border-radius: var(--radius-full);
 }
 .admin-empty {
@@ -291,16 +302,34 @@
     flex-direction: row;
     flex-wrap: wrap;
     gap: 6px;
+    align-items: center;
   }
-  /* Each action button takes at least its own line's worth of space
-     and keeps a 44-px tap target. Two-and-one wrapping at 360px is
-     fine — beats the previous "everything on one cramped row" layout. */
-  .event-card-actions .btn {
-    flex: 1 1 calc(50% - 3px);
-    min-height: 40px;
+  /* Hierarchy on small screens:
+     · Helfer (always the first .btn) is the dominant action — full
+       row, generous tap target.
+     · Bearbeiten sits on row 2 and grows to fill what's left.
+     · Absagen stays the outline danger style and tucks into the
+       remainder of row 2 with a smaller footprint, so the gesture
+       teachers reach for is "see helpers" or "edit", not "delete". */
+  .event-card-actions .btn:first-child {
+    flex: 1 1 100%;
+    min-height: 42px;
     justify-content: center;
     font-size: 13px;
-    padding: 8px 10px;
+    padding: 9px 12px;
+  }
+  .event-card-actions .btn-secondary:not(:first-child) {
+    flex: 1 1 auto;
+    min-height: 38px;
+    justify-content: center;
+    font-size: 13px;
+    padding: 7px 10px;
+  }
+  .event-card-actions .btn-danger {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 7px 12px;
+    font-size: 12px;
   }
 }
 
@@ -519,6 +548,15 @@
   margin-top: var(--space-5);
   padding-top: var(--space-4);
   border-top: 1px solid var(--gray-200);
+  flex-wrap: wrap;
+}
+@media (max-width: 540px) {
+  /* On phones the three bulk actions wrap into a 2+1 grid with the
+     primary "+ Helfer manuell eintragen" full-width on row 2 — the
+     thumb-reachable bottom of the modal. */
+  .helpers-bulk { gap: var(--space-2); justify-content: stretch; }
+  .helpers-bulk .btn { flex: 1 1 calc(50% - 4px); justify-content: center; min-height: 42px; font-size: 13px; }
+  .helpers-bulk .btn-primary { flex: 1 1 100%; }
 }
 
 /* ----- Helper count button on event card ----- */
