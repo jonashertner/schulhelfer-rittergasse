@@ -100,20 +100,26 @@
   --lavender: #c0bce0;
   --lavender-light: #28272f;
 
-  /* Refined dark backgrounds - warmer, less harsh */
-  --white: #1c1c1a;
-  --cream: #201f1d;
-  --warm-white: #242321;
+  /* Surface tiers — strict elevation order so cards / headers / hover
+     states pop UP from the body, not down. Each step is ~+5–8 % luma:
+       --cream      = page body          (deepest)
+       --white      = cards / modals     (one step up)
+       --warm-white = footer / admin hd  (two steps up)
+       --gray-100   = subtle tints       (three steps up)
+   */
+  --cream: #161614;
+  --white: #1f1e1c;
+  --warm-white: #262422;
+  --gray-100: #2c2a28;
 
-  /* Refined gray scale for dark mode */
-  --gray-100: #282726;
-  --gray-200: #363432;
-  --gray-300: #484644;
+  /* Refined gray scale for dark mode (text + borders) */
+  --gray-200: #3a3835;
+  --gray-300: #4a4744;
   --gray-400: #6e6c68;
-  --gray-500: #928f8a;
-  --gray-600: #b5b2ac;
-  --gray-700: #d8d6d2;
-  --gray-800: #eeece8;
+  --gray-500: #9a978f;
+  --gray-600: #bcb8b1;
+  --gray-700: #dcd9d2;
+  --gray-800: #efece6;
 
   /* Status colors - slightly brighter for dark mode */
   --success: #8fc0ac;
@@ -1495,7 +1501,9 @@ a {
 }
 
 [data-theme="dark"] .install-hero {
-  background: #2b4d7a;
+  /* Soft sage tint instead of the old hardcoded navy that didn't
+     match the rest of the dark-mode palette. */
+  background: linear-gradient(135deg, var(--sage-light), var(--warm-white));
 }
 
 .install-title {
@@ -1660,9 +1668,9 @@ a {
 }
 
 [data-theme="dark"] .install-banner-inner {
-  background: var(--gray-100, #2a2a2a);
-  color: var(--gray-900, #f0f0f0);
-  border-color: rgba(255,255,255,0.12);
+  background: var(--warm-white);
+  color: var(--gray-800);
+  border-color: rgba(255,255,255,0.08);
 }
 
 .install-banner-icon {
@@ -1768,8 +1776,8 @@ a {
 }
 
 [data-theme="dark"] .privacy-dialog {
-  background: var(--gray-800, #2a2927);
-  color: var(--gray-200, #e8e6e3);
+  background: var(--white);
+  color: var(--gray-700);
 }
 
 .privacy-card {
@@ -1784,7 +1792,7 @@ a {
   color: var(--gray-700, #3d3b38);
 }
 
-[data-theme="dark"] .privacy-body { color: var(--gray-300, #d4d2cf); }
+[data-theme="dark"] .privacy-body { color: var(--gray-600); }
 
 .privacy-body p {
   margin: 0 0 var(--space-3, 12px);
@@ -1822,7 +1830,7 @@ a {
 }
 
 [data-theme="dark"] .install-dialog {
-  background: var(--gray-800, #2a2927);
+  background: var(--white);
 }
 
 /* === Service Worker update toast === */
