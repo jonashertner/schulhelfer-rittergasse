@@ -515,8 +515,6 @@
   .admin-footer-nav { width: 100%; justify-content: center; }
 }
 
-:root[data-theme="dark"] .admin-footer { background: var(--gray-700, #2a2927); border-color: var(--gray-600); }
-
 /* ----- Toolbar layout (PR 4 additions) ----- */
 .admin-toolbar { flex-wrap: wrap; }
 .toolbar-spacer { flex: 1; min-width: 0; }
@@ -667,12 +665,14 @@ select#archive-year {
 }
 select#archive-year:focus { border-color: var(--sage); outline: none; }
 
-/* ----- Dark mode passthrough -----
-   We rely on the public site's :root[data-theme=dark] vars.
-   Minor adjustments here only where contrast needs help.
+/* ----- Dark mode -----
+   No overrides needed: every admin surface already references the
+   theme tokens (--cream for body, --white for cards / modals /
+   header, --warm-white for footer). Those tokens flip in
+   :root[data-theme="dark"] in css/styles.css, so the elevation
+   stack stays correct in both light and dark.
+
+   Earlier code overrode admin surfaces with var(--gray-800) /
+   var(--gray-700) — but in dark mode those tokens are LIGHT (text
+   colours), which produced a light strip over a dark body. Removed.
 */
-:root[data-theme="dark"] .admin-body { background: var(--gray-800, #18181b); color: var(--cream); }
-:root[data-theme="dark"] .admin-header { background: var(--gray-700, #27272a); border-color: var(--gray-600); }
-:root[data-theme="dark"] .login-card,
-:root[data-theme="dark"] .modal-content,
-:root[data-theme="dark"] .event-card { background: var(--gray-700, #27272a); border-color: var(--gray-600); }
