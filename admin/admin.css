@@ -649,6 +649,32 @@
   font-weight: 600;
 }
 
+/* ----- Reparieren (repair) action inside the integrity modal ----- */
+#repair-result { margin-top: 10px; font-size: 13px; line-height: 1.6; color: var(--gray-700); }
+#repair-result .integrity-line {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: var(--radius);
+  background: var(--gray-100);
+  border-left: 3px solid var(--gray-300);
+  white-space: pre-wrap;
+}
+#repair-result .integrity-line.is-warn { background: var(--warning-bg); border-color: var(--warning); }
+#repair-result .integrity-line.is-ok {
+  background: var(--success-bg); color: var(--success); border-color: var(--success);
+  font-weight: 600;
+}
+.repair-confirm {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  border-radius: var(--radius);
+}
+.repair-hint { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--gray-700); }
+.repair-confirm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.integrity-subhead { margin-top: 12px; margin-bottom: 4px; font-weight: 600; font-size: 13px; color: var(--gray-700); }
+
 select#archive-year {
   font-family: var(--font);
   width: 100%; padding: 10px 12px;

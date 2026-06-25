@@ -502,6 +502,7 @@ function handleAdminPost(action, data) {
       case 'updateRegistration':  return updateRegistrationAdmin(data);
       case 'archiveJahr':    return archiveJahrAdmin(data);
       case 'integrityCheck':      return integrityCheckAdmin();
+      case 'repair':              return setupVerstaerkenAdmin();
       case 'availableJahre': return availableJahreAdmin();
       default:
         return { success: false, error: 'Unbekannte Aktion: ' + action };
@@ -1944,17 +1945,21 @@ function nextAnlassId() {
  * and ensures the Anleitung sheet exists. Safe to run any number of
  * times.
  */
-function setupVerstaerken() {
-  var ui = SpreadsheetApp.getUi();
+// UI-free core of the "Setup verstärken" repair. Runs the same idempotent,
+// data-safe sequence from BOTH the Sheet menu and the admin web endpoint.
+// It must never call SpreadsheetApp.getUi()/ui.alert — those throw in a
+// doPost (web-app) context where there is no bound UI. Returns a plain
+// status object; safe to run repeatedly.
+function runSetupVerstaerken() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var anlassSheet = ss.getSheetByName('Anlässe');
   var helferSheet = ss.getSheetByName('Anmeldungen');
   if (!anlassSheet || !helferSheet) {
-    ui.alert('Bitte zuerst "Erstes Setup" ausführen – die Tabellenblätter "Anlässe" und "Anmeldungen" fehlen.');
-    return;
+    return { success: false, error: 'Die Tabellenblätter "Anlässe"/"Anmeldungen" fehlen. Bitte zuerst "Erstes Setup" ausführen.' };
   }
 
   var lock = LockService.getScriptLock();
+  var phoneStats = { scanned: 0, changed: 0 };
   try {
     lock.waitLock(15000);
 
@@ -1967,11 +1972,14 @@ function setupVerstaerken() {
     // Sweep all live + archived phone numbers into the canonical
     // "+41 XX XXX XX XX" form. Idempotent: rows already canonical are
     // skipped. Logs the totals to the audit trail.
-    var phoneStats = normalisiereAlleTelefonnummern();
+    phoneStats = normalisiereAlleTelefonnummern();
     if (phoneStats.changed) {
       logAudit('PHONES_NORMALIZED_VIA_SETUP', phoneStats, true, null);
     }
 
+    // backfill* wrote whole ranges back as VALUES, flattening the F
+    // (Angemeldete) and J (Sichtbar) formula columns; writeAnlassFormulas
+    // re-asserts both, so this ordering must be preserved.
     writeAnlassFormulas(anlassSheet);
     applyAnlassValidations(anlassSheet);
     applyAnmeldungValidations(helferSheet);
@@ -1986,26 +1994,49 @@ function setupVerstaerken() {
     }, true, null);
   } catch (e) {
     logAudit('SETUP_VERSTAERKT', {}, false, String(e));
-    ui.alert('Fehler beim Verstärken: ' + e);
-    return;
+    var msg = 'Fehler beim Verstärken: ' + e;
+    if (String(e).indexOf('lock') !== -1 || String(e).indexOf('Lock') !== -1) {
+      msg = 'Der Server ist gerade ausgelastet. Bitte in wenigen Sekunden erneut versuchen.';
+    }
+    return { success: false, error: msg };
   } finally {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
 
-  // Install the daily auto-archive trigger outside the lock (the
-  // ScriptApp.newTrigger call hits Google's trigger service, no
-  // sheet contention). Best-effort: if the user denies the
-  // additional auth, surface it but don't undo the rest of setup.
-  var triggerStatus = '';
+  // Install the daily auto-archive trigger outside the lock. Best-effort:
+  // needs the ScriptApp scope and may not be grantable in every context;
+  // a failure here must not undo the repair above.
+  var autoArchive = false, autoArchiveError = '';
   try {
     installiereAutoArchiv();
-    triggerStatus = '\n• Auto-Archiv aktiv: täglich um 03:00 werden Anlässe abgeschlossener Kalenderjahre automatisch archiviert.';
+    autoArchive = true;
   } catch (e) {
     logAudit('AUTO_ARCHIVE_INSTALL_FAIL', {}, false, String(e));
-    triggerStatus = '\n⚠️  Auto-Archiv konnte nicht installiert werden: ' + e +
-                    '\n   (Sie können es später über das Menü manuell auslösen.)';
+    autoArchiveError = String(e);
   }
 
+  return {
+    success: true,
+    autoArchive: autoArchive,
+    autoArchiveError: autoArchiveError,
+    phonesNormalized: phoneStats.changed || 0,
+    anlassRows: Math.max(anlassSheet.getLastRow() - 1, 0),
+    anmeldungRows: Math.max(helferSheet.getLastRow() - 1, 0)
+  };
+}
+
+// Menu entry point: runs the UI-free core, then reports via the Sheet UI.
+function setupVerstaerken() {
+  var ui = SpreadsheetApp.getUi();
+  var res = runSetupVerstaerken();
+  if (!res.success) {
+    ui.alert(res.error || 'Fehler beim Verstärken.');
+    return;
+  }
+  var triggerStatus = res.autoArchive
+    ? '\n• Auto-Archiv aktiv: täglich um 03:00 werden Anlässe abgeschlossener Kalenderjahre automatisch archiviert.'
+    : '\n⚠️  Auto-Archiv konnte nicht installiert werden: ' + res.autoArchiveError +
+      '\n   (Sie können es später über das Menü manuell auslösen.)';
   ui.alert(
     '✅ Setup verstärkt.\n\n' +
     '• Spalten "Status", "Jahr", "Sichtbar?", "Notizen" auf Anlässe.\n' +
@@ -2017,6 +2048,27 @@ function setupVerstaerken() {
     triggerStatus + '\n\n' +
     'Die Aktion ist idempotent – Sie können sie jederzeit erneut ausführen.'
   );
+}
+
+/**
+ * Admin web endpoint for the "Reparieren" button. Runs the same idempotent,
+ * UI-free repair core, then re-runs the integrity check so the web UI can
+ * show what (if anything) still needs a manual correction.
+ */
+function setupVerstaerkenAdmin() {
+  var res = runSetupVerstaerken();
+  if (!res.success) {
+    return { success: false, error: res.error || 'Reparatur fehlgeschlagen.' };
+  }
+  logAudit('ADMIN_REPAIR', { phonesNormalized: res.phonesNormalized, autoArchive: res.autoArchive }, true, null);
+  var report = buildIntegrityReport();
+  return {
+    success: true,
+    phonesNormalized: res.phonesNormalized,
+    autoArchive: res.autoArchive,
+    autoArchiveError: res.autoArchiveError,
+    remainingFindings: (report && report.findings) || []
+  };
 }
 
 /**

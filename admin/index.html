@@ -298,8 +298,17 @@
       <div class="modal-body">
         <div id="integrity-loading" hidden>Wird geprüft…</div>
         <div id="integrity-result"></div>
+        <div id="repair-confirm" class="repair-confirm" hidden>
+          <p class="repair-hint">🔧 <strong>Automatisch reparieren</strong> stellt fehlende Spalten (Status/Jahr) und die <em>Angemeldete</em>-Formel wieder her, sortiert die Anmeldungen und normalisiert die Telefonnummern. Datensicher und beliebig wiederholbar.</p>
+          <div class="repair-confirm-actions">
+            <button type="button" class="btn btn-primary" id="repair-go">Ja, reparieren</button>
+            <button type="button" class="btn btn-secondary" id="repair-cancel">Abbrechen</button>
+          </div>
+        </div>
+        <div id="repair-result" aria-live="polite" hidden></div>
       </div>
       <footer class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="repair-btn" title="Behebbare Befunde automatisch korrigieren"><span aria-hidden="true">🔧</span> Reparieren</button>
         <button type="button" class="btn btn-secondary" data-close>Schliessen</button>
       </footer>
     </div>
