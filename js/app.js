@@ -166,7 +166,14 @@
 
   function setupServiceWorkerUpdate() {
     if (!('serviceWorker' in navigator)) return;
+    // On the very first visit the page loads uncontrolled and the SW's
+    // initial clients.claim() fires one controllerchange — that is the
+    // first install, NOT an update, so it must not raise the "Neue
+    // Version verfügbar" toast. Only treat a controllerchange as an update
+    // when a controller already existed when the page loaded.
+    const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
       showUpdateToast();
     });
   }
@@ -271,11 +278,13 @@
     } catch (error) {
       console.error('Fehler beim Laden:', error);
       
-      // Retry logic for network failures
+      // Retry logic for network failures. fetch() rejects with a
+      // TypeError for ALL network errors across browsers (Chrome
+      // "Failed to fetch", Firefox "NetworkError…", Safari "Load failed"),
+      // so detect by type — not by an English message substring that only
+      // matches Chrome — plus AbortError for our manual timeout.
       if (retryAttempt < AppConfig.MAX_RETRIES && (
-        error.message.includes('Failed to fetch') ||
-        error.message.includes('network') ||
-        error.name === 'TimeoutError' ||
+        error instanceof TypeError ||
         error.name === 'AbortError'
       )) {
         retryAttempt++;
@@ -285,9 +294,11 @@
         return loadEvents(retryAttempt);
       }
       
-      // More helpful error message
+      // More helpful error message. Network failures reject with a
+      // TypeError across all browsers (see retry gate above), so detect
+      // by type rather than the Chrome-only "Failed to fetch" text.
       let message = 'Die Anlässe konnten nicht geladen werden.';
-      if (error.message.includes('Failed to fetch') || error.message.includes('CORS') || error.name === 'TimeoutError') {
+      if (error instanceof TypeError || error.message.includes('CORS')) {
         message = 'Verbindungsfehler. Bitte prüfen Sie:\n' +
                   '1. Ist die Google Apps Script URL korrekt?\n' +
                   '2. Wurde die Web-App als "Jeder" (nicht "Jeder mit Google-Konto") freigegeben?\n' +
@@ -616,6 +627,16 @@
       ? `${eventName} - ${attendeeName}`
       : eventName;
 
+    // Stable UID derived from the event identity (name + start), NOT a
+    // random value — so re-downloading the same event updates the
+    // existing calendar entry instead of creating a duplicate (RFC 5545
+    // expects a stable UID per logical event). attendeeName is excluded
+    // on purpose: it must not change the event's identity.
+    const uidSlug = `${eventName}-${startStr}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || 'anlass';
+
     return [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
@@ -640,7 +661,7 @@
       'END:DAYLIGHT',
       'END:VTIMEZONE',
       'BEGIN:VEVENT',
-      `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@schulhelfer-rittergasse`,
+      `UID:${uidSlug}@schulhelfer-rittergasse`,
       `DTSTAMP:${nowStr}`,
       `DTSTART;TZID=${ICAL_TZID}:${startStr}`,
       `DTEND;TZID=${ICAL_TZID}:${endStr}`,
@@ -661,11 +682,16 @@
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
+    link.rel = 'noopener';
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // Defer cleanup: revoking the object URL synchronously can cancel the
+    // download before the browser dispatches it (notably iOS Safari).
+    setTimeout(() => {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
 
   // Generate iCal file from event card
@@ -985,12 +1011,15 @@
     v = v.trim();
     if (!v) return null; // Optional field - empty is valid
 
-    // Remove spaces and dashes for validation
-    const cleaned = v.replace(/[\s\-]/g, '');
+    // Be lenient and match what the server accepts: it normalises Swiss
+    // and German formats and stores any other international number as
+    // typed. Accept anything that reduces to 6–15 digits (Swiss
+    // subscriber numbers are 9 digits without the trunk 0, full
+    // international up to 15 per E.164). Strip spaces, dashes, dots,
+    // slashes, parentheses and a single leading +.
+    const digits = v.replace(/[\s\-./()]/g, '').replace(/^\+/, '');
 
-    // Swiss phone formats: 079XXXXXXX, +41XXXXXXXXX, 0041XXXXXXXXX
-    // Also allow general international format
-    if (!/^(\+?41|0041|0)\d{8,10}$/.test(cleaned) && !/^\+?\d{10,15}$/.test(cleaned)) {
+    if (!/^\d{6,15}$/.test(digits)) {
       return 'Bitte geben Sie eine gültige Telefonnummer ein (z.B. 079 123 45 67).';
     }
 
@@ -1060,7 +1089,11 @@
     }
   }
 
-  async function submitWithRetry(data, retryAttempt = 0) {
+  // mayHaveCommitted becomes true once we've retried after a *network*
+  // failure — the original POST may have reached the server and written
+  // the row before its response was lost. It stays false for rate-limit
+  // retries (those never committed a row).
+  async function submitWithRetry(data, retryAttempt = 0, mayHaveCommitted = false) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), AppConfig.TIMEOUT_POST);
@@ -1087,20 +1120,28 @@
         // Retry on rate limit after delay
         retryAttempt++;
         await new Promise(resolve => setTimeout(resolve, AppConfig.RETRY_DELAY * retryAttempt * 2));
-        return submitWithRetry(data, retryAttempt);
+        return submitWithRetry(data, retryAttempt, mayHaveCommitted);
+      }
+
+      // Lost-response recovery: if a previous network retry may have
+      // committed the row, a DUPLICATE now means *our own* submission
+      // actually landed — surface it as success instead of the confusing
+      // "Sie sind bereits angemeldet" error.
+      if (!result.success && mayHaveCommitted && result.errorCode === 'DUPLICATE') {
+        return { success: true, message: 'Vielen Dank! Ihre Anmeldung ist eingegangen.' };
       }
 
       return result;
     } catch (error) {
-      // Retry on network errors
+      // Retry on network errors. fetch() throws a TypeError for every
+      // network failure across browsers; AbortError is our timeout.
       if (retryAttempt < AppConfig.MAX_RETRIES && (
         error.name === 'AbortError' ||
-        error.message.includes('Failed to fetch') ||
-        error.message.includes('network')
+        error instanceof TypeError
       )) {
         retryAttempt++;
         await new Promise(resolve => setTimeout(resolve, AppConfig.RETRY_DELAY * retryAttempt));
-        return submitWithRetry(data, retryAttempt);
+        return submitWithRetry(data, retryAttempt, true);
       }
       throw error;
     }

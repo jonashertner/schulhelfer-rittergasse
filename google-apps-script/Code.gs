@@ -31,6 +31,11 @@ var MAX_EVENT_NAME_LEN = 120;
 
 var ADMIN_EMAIL = ''; // Set this to receive notifications (optional)
 
+// Send a confirmation email to the helper after a successful signup.
+// Uses the Apps Script MailApp quota (consumer Gmail ~100/day, Google
+// Workspace ~1500/day — ample for a school tool). Set to false to disable.
+var SEND_HELPER_CONFIRMATION = true;
+
 // Admin key for the Helferliste download. Reads from Script Properties
 // first (recommended), falls back to this constant. To set up:
 //   1. In the Apps Script editor → Project Settings → Script Properties
@@ -56,6 +61,20 @@ function getAdminKeyValue() {
 function sanitizeInput(str) {
   if (!str) return '';
   return String(str).trim();
+}
+
+/**
+ * Escape a string for safe interpolation into an HTML email body.
+ * sanitizeInput() only trims; any value that reaches an htmlBody must
+ * pass through here so a parent-supplied name cannot inject markup.
+ */
+function htmlEscape(str) {
+  return String(str === null || str === undefined ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -463,7 +482,9 @@ function handleAdminPost(action, data) {
       return { success: false, error: 'Zu viele Fehlversuche. Bitte später erneut.' };
     }
     logAudit('ADMIN_AUTH_FAIL', { action: action }, false, 'Invalid admin key');
-    return { success: false, error: 'Keine Berechtigung.' };
+    // Stable, language-independent signal so the admin UI can drop to the
+    // login screen reliably (instead of matching the German error text).
+    return { success: false, error: 'Keine Berechtigung.', errorCode: 'UNAUTHORIZED' };
   }
 
   if (!checkRateLimit('admin-action', 60)) {
@@ -1071,20 +1092,26 @@ function registriereHelfer(data) {
   // Use LockService to prevent race conditions. try/finally guarantees
   // the lock is released even if an unexpected error escapes the body.
   var lock = LockService.getScriptLock();
-  var anlassName = '';
+  var anlassName = '', anlassDatum = '', anlassZeit = '', anlassBeschreibung = '';
   try {
     lock.waitLock(10000); // up to 10 s
 
     // Find event
     var anlassData = anlassSheet.getDataRange().getValues();
-    var anlassRow = -1, maxHelfer = 0, aktuelleHelfer = 0;
+    var anlassRow = -1, maxHelfer = 0;
 
     for (var i = 1; i < anlassData.length; i++) {
       if (String(anlassData[i][0]) === String(anlassId)) {
         anlassRow = i + 1;
         anlassName = sanitizeInput(anlassData[i][1] || '');
         maxHelfer = parseInt(anlassData[i][4]) || 0;
-        aktuelleHelfer = parseInt(anlassData[i][5]) || 0;
+        // Captured for the confirmation email (cols: C=Datum, D=Zeit, G=Beschreibung).
+        try {
+          var _d = parseDate(anlassData[i][2]);
+          anlassDatum = _d ? formatDatum(_d) : String(anlassData[i][2] || '');
+        } catch (_e) { anlassDatum = String(anlassData[i][2] || ''); }
+        anlassZeit = sanitizeInput(anlassData[i][3] || '');
+        anlassBeschreibung = sanitizeInput(anlassData[i][6] || '');
         break;
       }
     }
@@ -1093,21 +1120,34 @@ function registriereHelfer(data) {
       return { success: false, message: 'Der gewählte Anlass wurde nicht gefunden.' };
     }
 
-    // Re-check capacity after lock (prevent race condition)
-    if (aktuelleHelfer >= maxHelfer) {
-      return { success: false, message: 'Leider sind bereits alle Plätze vergeben.' };
+    // Capacity gate + duplicate check from a SINGLE read of the
+    // Anmeldungen sheet inside the lock. We deliberately do NOT trust the
+    // Anlässe!F COUNTIFS value for the gate: that formula's recalculation
+    // is not guaranteed to have committed between two lock-serialised
+    // requests, which reopened an oversubscription window. Counting the
+    // rows we just read makes the decision a pure function of data read
+    // inside this lock. Cancelled ('storniert') rows free their slot for
+    // the COUNT, but the (anlassId, email) duplicate check still spans
+    // ALL rows so that pair stays unique on the sheet (admin tooling and
+    // the COUNTIFS keying depend on it).
+    var helferData = helferSheet.getDataRange().getValues();
+    var activeCount = 0;
+    for (var j = 1; j < helferData.length; j++) {
+      if (String(helferData[j][1] || '') !== anlassId) continue;
+      var existingEmail = String(helferData[j][3] || '').toLowerCase().trim();
+      if (existingEmail === email) {
+        return {
+          success: false,
+          message: 'Sie sind bereits für diesen Anlass angemeldet.',
+          errorCode: 'DUPLICATE'
+        };
+      }
+      if (String(helferData[j][6] || 'aktiv').toLowerCase() === 'storniert') continue;
+      activeCount++;
     }
 
-    // Duplicate check: (anlassId, email) pair – name can vary slightly
-    // in casing/whitespace between submissions by the same parent, and
-    // we don't want to accept two rows for the same event+email.
-    var helferData = helferSheet.getDataRange().getValues();
-    for (var j = 1; j < helferData.length; j++) {
-      var existingEmail = String(helferData[j][3] || '').toLowerCase().trim();
-      var existingAnlassId = String(helferData[j][1] || '');
-      if (existingAnlassId === anlassId && existingEmail === email) {
-        return { success: false, message: 'Sie sind bereits für diesen Anlass angemeldet.' };
-      }
+    if (activeCount >= maxHelfer) {
+      return { success: false, message: 'Leider sind bereits alle Plätze vergeben.' };
     }
 
     // Register (transaction-safe). sheetSafe() prefixes any string
@@ -1115,11 +1155,11 @@ function registriereHelfer(data) {
     // single quote so Sheets stores it as text. Without this, "+41 79
     // ..." phone numbers are silently parsed as unary-plus formulas
     // and either lose the leading "+" or become #ERROR!.
-    // Append registration. The Anlässe!F (Angemeldete) column is now a
-    // COUNTIFS formula maintained by Sheets, so we no longer write the
-    // count manually – that would clobber the formula. Capacity remains
-    // race-safe because LockService serialises registrations and the
-    // formula recomputes synchronously when the next request reads it.
+    // Append registration. The Anlässe!F (Angemeldete) column is a
+    // COUNTIFS formula maintained by Sheets, so we never write the count
+    // manually – that would clobber the formula. The capacity gate above
+    // counts the rows we just read inside this lock, so it does not depend
+    // on the formula having recalculated between requests.
     // The trailing 'aktiv' goes into Anmeldungen!G (Status column added
     // by setupVerstaerken). On unmigrated sheets it sits as data in an
     // unlabelled column G; harmless and forward-compatible.
@@ -1148,21 +1188,75 @@ function registriereHelfer(data) {
     try { if (lock.hasLock()) lock.releaseLock(); } catch (_) {}
   }
 
-  // Outside the lock: optional email notification (non-critical).
+  // Outside the lock: email is non-critical — a mail failure must never
+  // affect the registration result, so each send is wrapped defensively.
+
+  // 1) Optional admin notification. User-supplied fields are HTML-escaped
+  //    before they reach the htmlBody (sanitizeInput only trims).
   if (ADMIN_EMAIL) {
-    var emailBody = 'Neue Anmeldung für Schulhelfer:\n\n' +
-                   'Anlass: ' + anlassName + '\n' +
-                   'Name: ' + name + '\n' +
-                   'E-Mail: ' + email + '\n' +
-                   (telefon ? 'Telefon: ' + telefon + '\n' : '') +
-                   'Datum: ' + new Date().toLocaleString('de-CH');
-    sendEmailNotification(ADMIN_EMAIL, 'Neue Anmeldung: ' + anlassName, emailBody);
+    try {
+      var adminLines = [
+        'Neue Anmeldung für Schulhelfer:',
+        '',
+        'Anlass: ' + anlassName,
+        'Name: ' + name,
+        'E-Mail: ' + email
+      ];
+      if (telefon) adminLines.push('Telefon: ' + telefon);
+      adminLines.push('Datum: ' + new Date().toLocaleString('de-CH'));
+      var adminText = adminLines.join('\n');
+      var adminHtml = adminLines.map(function (l) { return l === '' ? '' : htmlEscape(l); }).join('<br>');
+      sendEmailNotification(ADMIN_EMAIL, 'Neue Anmeldung: ' + anlassName, adminText, adminHtml);
+    } catch (mailErr) {
+      Logger.log('Admin notification failed: ' + mailErr);
+    }
+  }
+
+  // 2) Confirmation email to the helper at the address they provided.
+  if (SEND_HELPER_CONFIRMATION && email) {
+    try {
+      sendHelferConfirmation(email, name, anlassName, anlassDatum, anlassZeit, anlassBeschreibung);
+    } catch (mailErr2) {
+      Logger.log('Helper confirmation failed: ' + mailErr2);
+    }
   }
 
   return {
     success: true,
     message: 'Vielen Dank, ' + name + '! Sie sind für «' + anlassName + '» angemeldet.'
   };
+}
+
+/**
+ * Send a friendly confirmation email to a helper who just signed up.
+ * Every interpolated value is HTML-escaped for the htmlBody. Errors are
+ * swallowed by the caller so a mail problem never fails the registration.
+ */
+function sendHelferConfirmation(to, name, anlassName, datum, zeit, beschreibung) {
+  var subject = 'Anmeldung bestätigt: ' + anlassName;
+
+  var details = ['Anlass: ' + anlassName];
+  if (datum) details.push('Datum: ' + datum);
+  if (zeit) details.push('Zeit: ' + zeit);
+  if (beschreibung) details.push('Details: ' + beschreibung);
+
+  var lines = [
+    'Liebe/r ' + name + ',',
+    '',
+    'vielen Dank für Ihre Anmeldung als Helfer/in! Wir freuen uns sehr über Ihre Unterstützung.',
+    ''
+  ].concat(details).concat([
+    '',
+    'Falls Sie doch verhindert sind, melden Sie sich bitte kurz bei der Schulleitung, ' +
+      'damit der Platz neu vergeben werden kann.',
+    '',
+    'Herzlichen Dank und bis bald!',
+    'Primarstufe Rittergasse Basel'
+  ]);
+
+  var text = lines.join('\n');
+  var html = lines.map(function (l) { return l === '' ? '' : htmlEscape(l); }).join('<br>');
+  sendEmailNotification(to, subject, text, html);
 }
 
 // === Setup ===
