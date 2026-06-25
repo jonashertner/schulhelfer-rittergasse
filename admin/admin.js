@@ -70,6 +70,9 @@
     // PR 4 additions
     if (CONFIG.SPREADSHEET_URL) $('#sheet-link').href = CONFIG.SPREADSHEET_URL;
     $('#integrity-btn').addEventListener('click', openIntegrity);
+    $('#repair-btn').addEventListener('click', askRepair);
+    $('#repair-go').addEventListener('click', doRepair);
+    $('#repair-cancel').addEventListener('click', cancelRepair);
     $('#archive-btn').addEventListener('click', openArchive);
     $('#archive-confirm').addEventListener('change', (e) => { $('#archive-go-btn').disabled = !e.target.checked; });
     $('#archive-go-btn').addEventListener('click', handleArchiveSubmit);
@@ -819,31 +822,113 @@
   // ============================================================
   // Integrity check
   // ============================================================
+  // Render a findings array into a target node (shared by check + repair).
+  function renderFindings(target, findings) {
+    target.replaceChildren();
+    if (!findings || findings.length === 0) {
+      const div = el('div', 'integrity-line is-ok');
+      div.textContent = '✅ Alles sauber. Keine Auffälligkeiten gefunden.';
+      target.appendChild(div);
+      return;
+    }
+    findings.forEach(line => {
+      const div = el('div', 'integrity-line');
+      if (line.indexOf('⚠') === 0) div.classList.add('is-warn');
+      div.textContent = line;
+      target.appendChild(div);
+    });
+  }
+
+  function resetRepairUi() {
+    $('#repair-confirm').hidden = true;
+    const out = $('#repair-result');
+    out.replaceChildren();
+    out.hidden = true;
+    $('#repair-btn').hidden = false;
+    $('#repair-btn').disabled = false;
+  }
+
   async function openIntegrity() {
+    resetRepairUi();
     $('#integrity-loading').hidden = false;
     $('#integrity-result').replaceChildren();
     openModal('integrity-modal');
     const key = localStorage.getItem(STORAGE_KEY);
     const result = await callAdmin({ action: 'integrityCheck' }, key);
     $('#integrity-loading').hidden = true;
-    const target = $('#integrity-result');
     if (!result || !result.success) {
       const div = el('div', 'integrity-line is-warn');
       div.textContent = pickError(result, 'Prüfung fehlgeschlagen.');
-      target.appendChild(div);
+      $('#integrity-result').appendChild(div);
+      $('#repair-btn').hidden = true; // couldn't read → don't offer repair
       return;
     }
-    if (!result.findings || result.findings.length === 0) {
-      const div = el('div', 'integrity-line is-ok');
-      div.textContent = '✅ Alles sauber. Keine Auffälligkeiten gefunden.';
-      target.appendChild(div);
-      return;
+    renderFindings($('#integrity-result'), result.findings);
+  }
+
+  // Reparieren: reveal the inline confirmation.
+  function askRepair() {
+    $('#repair-btn').hidden = true;
+    $('#repair-confirm').hidden = false;
+  }
+  function cancelRepair() {
+    $('#repair-confirm').hidden = true;
+    $('#repair-btn').hidden = false;
+  }
+
+  let repairing = false;
+  async function doRepair() {
+    if (repairing) return; // guard against a double-click firing two repairs
+    repairing = true;
+    $('#repair-confirm').hidden = true;
+    $('#repair-btn').hidden = true;
+    const out = $('#repair-result');
+    out.hidden = false;
+    out.replaceChildren();
+    const busy = el('div', 'integrity-line');
+    busy.textContent = '🔧 Wird repariert …';
+    out.appendChild(busy);
+
+    try {
+      const key = localStorage.getItem(STORAGE_KEY);
+      const result = await callAdmin({ action: 'repair' }, key);
+      out.replaceChildren();
+
+      if (!result || !result.success) {
+        const div = el('div', 'integrity-line is-warn');
+        div.textContent = pickError(result, 'Reparatur fehlgeschlagen.');
+        out.appendChild(div);
+        $('#repair-btn').hidden = false; // allow retry
+        return;
+      }
+
+      const ok = el('div', 'integrity-line is-ok');
+      let msg = '✅ Reparatur abgeschlossen.';
+      if (result.phonesNormalized > 0) {
+        msg += ' ' + result.phonesNormalized + ' Telefonnummer(n) normalisiert.';
+      }
+      ok.textContent = msg;
+      out.appendChild(ok);
+
+      // Show what remains directly under its own heading (self-contained),
+      // leaving the original check above as the "before" state.
+      const remaining = (result.remainingFindings && result.remainingFindings.length)
+        ? result.remainingFindings : [];
+      const heading = el('div', 'integrity-subhead');
+      heading.textContent = remaining.length
+        ? 'Verbleibende Befunde (manuelle Korrektur nötig):'
+        : 'Keine verbleibenden Befunde.';
+      out.appendChild(heading);
+      if (remaining.length) {
+        const list = el('div', 'repair-findings');
+        renderFindings(list, remaining);
+        out.appendChild(list);
+      }
+
+      // Formulas/columns may have changed — refresh the dashboard too.
+      refreshEvents();
+    } finally {
+      repairing = false;
     }
-    result.findings.forEach(line => {
-      const div = el('div', 'integrity-line');
-      if (line.indexOf('⚠') === 0) div.classList.add('is-warn');
-      div.textContent = line;
-      target.appendChild(div);
-    });
   }
 })();
