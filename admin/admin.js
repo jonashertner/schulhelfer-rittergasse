@@ -154,7 +154,9 @@
 
     if (!result || !result.success) {
       const msg = pickError(result, 'Daten konnten nicht geladen werden.');
-      if (result && result.error === 'Keine Berechtigung.') return false;
+      // Drop to the login screen on an auth failure. Prefer the stable
+      // errorCode; fall back to the German string for older deployments.
+      if (result && (result.errorCode === 'UNAUTHORIZED' || result.error === 'Keine Berechtigung.')) return false;
       showBanner('error-banner', msg);
       return true;
     }
@@ -390,8 +392,11 @@
       setBusy('#confirm-ok-btn', false);
       if (result && result.success) {
         closeModal('confirm-modal');
-        flashSuccess('Anlass abgesagt.');
+        // Show ONE banner: the detailed helper-notice when there are
+        // registrations, otherwise a brief confirmation. (Previously both
+        // fired and the second immediately overwrote the first.)
         if (event.angemeldete > 0) maybeOfferEmailDraft(event);
+        else flashSuccess('Anlass abgesagt.');
         await refreshEvents();
       } else {
         showBanner('error-banner', pickError(result, 'Absage fehlgeschlagen.'));
@@ -703,8 +708,10 @@
       return;
     }
     const subject = encodeURIComponent('Schulhelfer · ' + (State.helpersEvent ? State.helpersEvent.name : ''));
-    // Use BCC so addresses stay private from each other.
-    const href = 'mailto:?bcc=' + emails.join(',') + '&subject=' + subject;
+    // Use BCC so addresses stay private from each other. Encode each
+    // address so a stray character can't break the mailto: URL.
+    const bcc = emails.map(function (e) { return encodeURIComponent(e); }).join(',');
+    const href = 'mailto:?bcc=' + bcc + '&subject=' + subject;
     window.location.href = href;
   }
 

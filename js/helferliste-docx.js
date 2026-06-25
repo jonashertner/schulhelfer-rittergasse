@@ -322,11 +322,16 @@
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
+    link.rel = 'noopener';
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // Defer cleanup: revoking synchronously can cancel the download
+    // before the browser dispatches it (notably iOS Safari).
+    setTimeout(function () {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
 
   function filenameFor(event) {
